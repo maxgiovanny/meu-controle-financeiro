@@ -5,7 +5,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # --- CONFIGURAÇÃO ---
-st.set_page_config(page_title="Controlo Financeiro", page_icon="💰", layout="centered")
+st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="centered")
 
 MESES = {
     "Janeiro": 1, "Fevereiro": 2, "Março": 3, "Abril": 4, 

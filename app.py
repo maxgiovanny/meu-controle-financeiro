@@ -1,66 +1,94 @@
 import streamlit as st
+import pandas as pd
 
-# Configuração da página para ficar bem no telemóvel
+# Configuração da página
 st.set_page_config(page_title="Controlo Financeiro", page_icon="💰", layout="centered")
 
-st.title("💰 O Meu Controlo Financeiro")
+# --- MEMÓRIA DA APLICAÇÃO ---
+# Isso garante que as suas edições não desaparecem enquanto navega nas abas
+if "mes_atual" not in st.session_state:
+    st.session_state.mes_atual = "Maio"
+if "renda" not in st.session_state:
+    st.session_state.renda = 10000.00
+if "cartoes" not in st.session_state:
+    st.session_state.cartoes = ["Digio", "Itaú", "Inter", "Mercado Pago", "Will"]
+if "gastos_fixos" not in st.session_state:
+    st.session_state.gastos_fixos = pd.DataFrame({
+        "Descrição": ["Consórcio", "Plano de Saúde", "Combustível", "Linha Claro", "Linha Mútua", "Energia", "Mário Felipe", "Pedro"],
+        "Valor (R$)": [1350.00, 355.23, 1200.00, 90.00, 50.00, 70.00, 100.00, 80.00],
+        "Pago": [False] * 8
+    })
+if "gastos_casuais" not in st.session_state:
+    st.session_state.gastos_casuais = pd.DataFrame({"Descrição": ["Supermercado"], "Valor (R$)": [600.00]})
 
-# Criação dos separadores (Tabs)
-abas = st.tabs([
-    "Painel Geral", "Gastos Fixos", "Dia a Dia", 
-    "💳 Digio", "💳 Itaú", "💳 Inter", "💳 Mercado Pago", "💳 Will"
-])
+# --- MENU LATERAL (Mês, Renda e Novos Cartões) ---
+with st.sidebar:
+    st.header("⚙️ Configurações")
+    st.session_state.mes_atual = st.selectbox("Mês de Referência:", 
+        ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"], index=4)
+    
+    st.session_state.renda = st.number_input("Renda Mensal (R$):", value=st.session_state.renda, step=100.00)
+    
+    st.divider()
+    st.subheader("Adicionar Cartão")
+    novo_cartao = st.text_input("Nome do Novo Cartão:")
+    if st.button("➕ Adicionar Cartão"):
+        if novo_cartao and novo_cartao not in st.session_state.cartoes:
+            st.session_state.cartoes.append(novo_cartao)
+            st.rerun() # Atualiza a página para mostrar a nova aba
+
+# Título Principal
+st.title(f"💰 Controlo Financeiro - {st.session_state.mes_atual}")
+
+# --- CRIAÇÃO DAS ABAS ---
+nomes_abas = ["Painel Geral", "Gastos Fixos", "Dia a Dia"] + [f"💳 {c}" for c in st.session_state.cartoes]
+abas = st.tabs(nomes_abas)
 
 # --- ABA 1: PAINEL GERAL ---
 with abas[0]:
     st.header("Resumo do Mês")
     
-    # Exibição lado a lado
-    col1, col2 = st.columns(2)
-    col1.metric("Renda Mensal", "R$ 10.000,00")
-    col2.metric("Saldo Livre", "R$ 4.599,26")
+    # Cálculos dinâmicos baseados nas tabelas
+    total_fixos = st.session_state.gastos_fixos["Valor (R$)"].sum()
+    total_casuais = st.session_state.gastos_casuais["Valor (R$)"].sum()
     
-    st.progress(54) # Barra de progresso visual simulando 54% da renda comprometida
-    st.caption("Você já comprometeu 54% da sua renda este mês.")
+    # Para simplificar agora, somamos fixos + casuais (os cartões podem ser integrados no cálculo futuro)
+    total_gasto = total_fixos + total_casuais
+    saldo_livre = st.session_state.renda - total_gasto
+    percentual_gasto = (total_gasto / st.session_state.renda) * 100 if st.session_state.renda > 0 else 0
 
-# --- ABA 2: GASTOS FIXOS ---
+    col1, col2 = st.columns(2)
+    col1.metric("Renda Mensal", f"R$ {st.session_state.renda:,.2f}")
+    col2.metric("Saldo Livre (Sem cartões)", f"R$ {saldo_livre:,.2f}")
+    
+    st.progress(min(int(percentual_gasto), 100))
+    st.caption(f"Você já comprometeu {percentual_gasto:.1f}% da sua renda com custos fixos e casuais.")
+
+# --- ABA 2: GASTOS FIXOS (Editável) ---
 with abas[1]:
     st.header("Gastos Fixos")
-    st.write("Marque o que já foi pago este mês:")
-    
-    st.checkbox("Consórcio (R$ 1.350,00)")
-    st.checkbox("Plano de Saúde (R$ 355,23)")
-    st.checkbox("Combustível - Estimativa (R$ 1.200,00)")
-    st.checkbox("Linha Claro (R$ 90,00)")
-    st.checkbox("Linha Mútua (R$ 50,00)")
-    st.checkbox("Energia (R$ 70,00)")
-    st.checkbox("Mário Felipe (R$ 100,00)")
-    st.checkbox("Pedro (R$ 80,00)")
+    st.info("💡 **Dica:** Clique em qualquer valor para alterar. Para apagar uma linha, clique no quadradinho à esquerda dela e aperte a tecla 'Delete' (ou use o ícone da lixeira no telemóvel). Uma linha vazia no final permite adicionar novos gastos.")
+    st.session_state.gastos_fixos = st.data_editor(st.session_state.gastos_fixos, num_rows="dynamic", use_container_width=True, hide_index=True)
 
-# --- ABA 3: DIA A DIA ---
+# --- ABA 3: DIA A DIA (Editável) ---
 with abas[2]:
-    st.header("Gastos do Dia a Dia")
-    st.write("Registre aqui as compras no Pix ou Débito (ex: Mercado, Padaria).")
-    
-    with st.form("form_dia_a_dia"):
-        descricao = st.text_input("O que comprou?")
-        valor = st.number_input("Qual o valor? (R$)", min_value=0.0, format="%.2f")
-        submetido = st.form_submit_button("Adicionar Gasto")
-        if submetido:
-            st.success(f"Gasto de R$ {valor} em '{descricao}' adicionado com sucesso!")
+    st.header("Gastos Casuais")
+    st.write("Adicione aqui padaria, farmácia, Pix, etc.")
+    st.session_state.gastos_casuais = st.data_editor(st.session_state.gastos_casuais, num_rows="dynamic", use_container_width=True, hide_index=True)
 
-# --- ABAS DOS CARTÕES ---
-cartoes = ["Digio", "Itaú", "Inter", "Mercado Pago", "Will"]
-for i, cartao in enumerate(cartoes, start=3):
+# --- ABAS DOS CARTÕES (Dinâmicas e Editáveis) ---
+for i, cartao in enumerate(st.session_state.cartoes, start=3):
     with abas[i]:
         st.header(f"Fatura: {cartao}")
         
-        # Formulário para adicionar compra parcelada
-        with st.form(f"form_{cartao}"):
-            desc_cartao = st.text_input(f"Nova compra no {cartao}")
-            valor_cartao = st.number_input("Valor da parcela (R$)", min_value=0.0, format="%.2f")
-            parcelas = st.number_input("Número de parcelas", min_value=1, step=1)
-            add_cartao = st.form_submit_button("Registrar no Cartão")
-            
-            if add_cartao:
-                st.success("Compra registrada na fatura!")
+        # Cria uma tabela independente para cada cartão na memória
+        if f"tabela_{cartao}" not in st.session_state:
+            st.session_state[f"tabela_{cartao}"] = pd.DataFrame({"Compra": [""], "Parcela (ex: 1/10)": [""], "Valor (R$)": [0.00]})
+        
+        st.session_state[f"tabela_{cartao}"] = st.data_editor(
+            st.session_state[f"tabela_{cartao}"], 
+            num_rows="dynamic", 
+            use_container_width=True, 
+            hide_index=True,
+            key=f"editor_{cartao}" # Chave única para não dar erro
+        )

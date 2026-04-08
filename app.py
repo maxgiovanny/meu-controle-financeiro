@@ -2,17 +2,20 @@ import streamlit as st
 import pandas as pd
 import json
 import gspread
+import plotly.express as px
 from datetime import datetime
 from google.oauth2.service_account import Credentials
 
 # --- CONFIGURAÇÃO ---
-st.set_page_config(page_title="Controle Financeiro", page_icon="📈", layout="centered")
+st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="centered")
 
 MESES = {
     "Janeiro": 1, "Fevereiro": 2, "Março": 3, "Abril": 4, 
     "Maio": 5, "Junho": 6, "Julho": 7, "Agosto": 8, 
     "Setembro": 9, "Outubro": 10, "Novembro": 11, "Dezembro": 12
 }
+
+CATEGORIAS = ["Alimentação", "Transporte", "Lazer", "Saúde", "Casa", "Trabalho", "Outros"]
 
 # --- LIGAÇÃO À GOOGLE SHEET ---
 @st.cache_resource
@@ -56,7 +59,7 @@ def salvar_dados_nuvem():
     
     json_str = json.dumps(dados_completos)
     worksheet.update(values=[[json_str]], range_name='A1')
-    st.toast("💾 Sincronizado!", icon="✅")
+    st.toast("💾 Dados salvos!", icon="✅")
 
 # --- INICIALIZAÇÃO DA MEMÓRIA ---
 if "dados_carregados" not in st.session_state:
@@ -68,17 +71,20 @@ if "dados_carregados" not in st.session_state:
         st.session_state.guias_extras = dados_nuvem.get("guias_extras", [])
         st.session_state.gastos_fixos = pd.DataFrame(dados_nuvem.get("gastos_fixos", []))
         df_casuais = pd.DataFrame(dados_nuvem.get("gastos_casuais", []))
-        if not df_casuais.empty and "Data" in df_casuais.columns:
-            df_casuais["Data"] = pd.to_datetime(df_casuais["Data"]).dt.date
+        
+        if not df_casuais.empty:
+            if "Data" in df_casuais.columns: df_casuais["Data"] = pd.to_datetime(df_casuais["Data"]).dt.date
+            if "Categoria" not in df_casuais.columns: df_casuais["Categoria"] = "Outros"
         else:
-            df_casuais = pd.DataFrame(columns=["Data", "Descrição", "Valor (R$)"])
+            df_casuais = pd.DataFrame(columns=["Data", "Categoria", "Descrição", "Valor (R$)"])
         st.session_state.gastos_casuais = df_casuais
+        
         for guia in st.session_state.guias_extras:
             st.session_state[f"dados_{guia}"] = pd.DataFrame(dados_nuvem.get(f"dados_{guia}", []))
     else:
         st.session_state.ano_atual, st.session_state.mes_atual, st.session_state.renda = 2026, "Maio", 10000.0
         st.session_state.guias_extras, st.session_state.gastos_fixos = [], pd.DataFrame(columns=["Descrição", "Valor (R$)", "Pago"])
-        st.session_state.gastos_casuais = pd.DataFrame(columns=["Data", "Descrição", "Valor (R$)"])
+        st.session_state.gastos_casuais = pd.DataFrame(columns=["Data", "Categoria", "Descrição", "Valor (R$)"])
     st.session_state.dados_carregados = True
 
 # --- LOGICA DE CÁLCULO ---
@@ -107,7 +113,6 @@ with st.sidebar:
     novo_ano = st.number_input("Ano:", min_value=2024, max_value=2030, value=st.session_state.ano_atual)
     nova_renda = st.number_input("Renda (R$):", value=st.session_state.renda, step=100.0)
     
-    # AQUI ESTAVA O ERRO - LINHA CORRIGIDA
     if novo_mes != st.session_state.mes_atual or novo_ano != st.session_state.ano_atual or nova_renda != st.session_state.renda:
         st.session_state.mes_atual, st.session_state.ano_atual, st.session_state.renda = novo_mes, novo_ano, nova_renda
         salvar_dados_nuvem()
@@ -140,12 +145,22 @@ st.divider()
 
 if sel == "Resumo Geral":
     gasto_total = t_fixos + t_casuais + t_guias
-    sobra = st.session_state.renda - gasto_total
+    sobra = max(0.0, st.session_state.renda - gasto_total)
+    
+    # Gráfico de Rosca
+    df_grafico = pd.DataFrame({
+        "Categoria": ["Fixos", "Dia a Dia", "Guias/Cartões", "Sobra"],
+        "Valor": [t_fixos, t_casuais, t_guias, sobra]
+    })
+    fig = px.pie(df_grafico, values='Valor', names='Categoria', hole=.4, 
+                 color_discrete_sequence=px.colors.qualitative.Pastel)
+    fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300)
+    st.plotly_chart(fig, use_container_width=True)
+
     c1, c2 = st.columns(2)
-    c1.metric("Renda", f"R$ {st.session_state.renda:,.2f}")
-    c2.metric("Sobra", f"R$ {sobra:,.2f}")
+    c1.metric("Total Gasto", f"R$ {gasto_total:,.2f}")
+    c2.metric("Sobra Real", f"R$ {sobra:,.2f}")
     st.progress(min(int((gasto_total/st.session_state.renda)*100), 100) if st.session_state.renda > 0 else 0)
-    st.write(f"Fixos: R$ {t_fixos:,.2f} | Dia a Dia: R$ {t_casuais:,.2f} | Guias: R$ {t_guias:,.2f}")
 
 elif sel == "Custos Fixos":
     st.header("Custos Fixos")
@@ -156,26 +171,15 @@ elif sel == "Custos Fixos":
 
 elif sel == "Dia a Dia":
     st.header("Gastos Diários")
-    ed_c = st.data_editor(st.session_state.gastos_casuais, num_rows="dynamic", use_container_width=True, hide_index=True,
-                         column_config={"Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY", default=datetime.now().date())})
+    ed_c = st.data_editor(
+        st.session_state.gastos_casuais, 
+        num_rows="dynamic", 
+        use_container_width=True, 
+        hide_index=True,
+        column_config={
+            "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY", default=datetime.now().date()),
+            "Categoria": st.column_config.SelectboxColumn("Categoria", options=CATEGORIAS, default="Outros"),
+            "Valor (R$)": st.column_config.NumberColumn("Valor (R$)", format="%.2f")
+        }
+    )
     if not ed_c.equals(st.session_state.gastos_casuais):
-        st.session_state.gastos_casuais = ed_c
-        salvar_dados_nuvem()
-
-else:
-    guia_sel = sel
-    df_resumo, v_total = calcular_parcelas_v2(st.session_state[f"dados_{guia_sel}"], mes_num, ano_ref)
-    st.subheader(f"Gastos de {st.session_state.mes_atual}: R$ {v_total:,.2f}")
-    
-    if not df_resumo.empty:
-        st.dataframe(df_resumo, use_container_width=True, hide_index=True)
-    else:
-        st.info("Sem gastos para este mês.")
-        
-    st.divider()
-    st.subheader("Base Histórica")
-    ed_g = st.data_editor(st.session_state[f"dados_{guia_sel}"], num_rows="dynamic", use_container_width=True, hide_index=True, key=f"editor_{guia_sel}")
-    if not ed_g.equals(st.session_state[f"dados_{guia_sel}"]):
-        st.session_state[f"dados_{guia_sel}"] = ed_g
-        salvar_dados_nuvem()
-        st.rerun()

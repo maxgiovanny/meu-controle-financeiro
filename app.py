@@ -135,8 +135,8 @@ with st.sidebar:
 
 # --- INTERFACE ---
 mes_num, ano_ref = MESES[st.session_state.mes_atual], st.session_state.ano_atual
-t_fixos = st.session_state.gastos_fixos["Valor (R$)"].sum()
-t_casuais = st.session_state.gastos_casuais["Valor (R$)"].sum()
+t_fixos = st.session_state.gastos_fixos["Valor (R$)"].sum() if not st.session_state.gastos_fixos.empty else 0.0
+t_casuais = st.session_state.gastos_casuais["Valor (R$)"].sum() if not st.session_state.gastos_casuais.empty else 0.0
 t_guias = sum([calcular_parcelas_v2(st.session_state[f"dados_{g}"], mes_num, ano_ref)[1] for g in st.session_state.guias_extras])
 
 st.title(f"💰 {st.session_state.mes_atual} / {ano_ref}")
@@ -147,7 +147,6 @@ if sel == "Resumo Geral":
     gasto_total = t_fixos + t_casuais + t_guias
     sobra = max(0.0, st.session_state.renda - gasto_total)
     
-    # Gráfico de Rosca
     df_grafico = pd.DataFrame({
         "Categoria": ["Fixos", "Dia a Dia", "Guias/Cartões", "Sobra"],
         "Valor": [t_fixos, t_casuais, t_guias, sobra]
@@ -183,3 +182,27 @@ elif sel == "Dia a Dia":
         }
     )
     if not ed_c.equals(st.session_state.gastos_casuais):
+        st.session_state.gastos_casuais = ed_c
+        salvar_dados_nuvem()
+    
+    if not st.session_state.gastos_casuais.empty:
+        st.divider()
+        st.subheader("📊 Por Categoria")
+        resumo_cat = st.session_state.gastos_casuais.groupby("Categoria")["Valor (R$)"].sum().reset_index()
+        st.dataframe(resumo_cat, use_container_width=True, hide_index=True)
+
+else:
+    guia_sel = sel
+    df_resumo, v_total = calcular_parcelas_v2(st.session_state[f"dados_{guia_sel}"], mes_num, ano_ref)
+    st.subheader(f"Gastos de {st.session_state.mes_atual}: R$ {v_total:,.2f}")
+    if not df_resumo.empty:
+        st.dataframe(df_resumo, use_container_width=True, hide_index=True)
+    else:
+        st.info("Sem gastos para este mês.")
+    st.divider()
+    st.subheader("Base Histórica")
+    ed_g = st.data_editor(st.session_state[f"dados_{guia_sel}"], num_rows="dynamic", use_container_width=True, hide_index=True, key=f"editor_{guia_sel}")
+    if not ed_g.equals(st.session_state[f"dados_{guia_sel}"]):
+        st.session_state[f"dados_{guia_sel}"] = ed_g
+        salvar_dados_nuvem()
+        st.rerun()

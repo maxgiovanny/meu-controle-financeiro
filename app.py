@@ -106,4 +106,76 @@ with st.sidebar:
     novo_mes = st.selectbox("Mês:", list(MESES.keys()), index=list(MESES.keys()).index(st.session_state.mes_atual))
     novo_ano = st.number_input("Ano:", min_value=2024, max_value=2030, value=st.session_state.ano_atual)
     nova_renda = st.number_input("Renda (R$):", value=st.session_state.renda, step=100.0)
-    if novo_mes != st.session_state.mes_atual or novo_ano != st.session_state
+    
+    # AQUI ESTAVA O ERRO - LINHA CORRIGIDA
+    if novo_mes != st.session_state.mes_atual or novo_ano != st.session_state.ano_atual or nova_renda != st.session_state.renda:
+        st.session_state.mes_atual, st.session_state.ano_atual, st.session_state.renda = novo_mes, novo_ano, nova_renda
+        salvar_dados_nuvem()
+        st.rerun()
+        
+    st.divider()
+    n_guia = st.text_input("Nova Guia:")
+    if st.button("➕ Criar"):
+        if n_guia and n_guia not in st.session_state.guias_extras:
+            st.session_state.guias_extras.append(n_guia)
+            st.session_state[f"dados_{n_guia}"] = pd.DataFrame(columns=["Descrição", "Mês Início (1-12)", "Ano Início", "Qtd Parcelas", "Valor Parcela (R$)"])
+            salvar_dados_nuvem()
+            st.rerun()
+    if st.session_state.guias_extras:
+        g_rem = st.selectbox("Apagar Guia:", st.session_state.guias_extras)
+        if st.button("🗑️ Apagar"):
+            st.session_state.guias_extras.remove(g_rem)
+            salvar_dados_nuvem()
+            st.rerun()
+
+# --- INTERFACE ---
+mes_num, ano_ref = MESES[st.session_state.mes_atual], st.session_state.ano_atual
+t_fixos = st.session_state.gastos_fixos["Valor (R$)"].sum()
+t_casuais = st.session_state.gastos_casuais["Valor (R$)"].sum()
+t_guias = sum([calcular_parcelas_v2(st.session_state[f"dados_{g}"], mes_num, ano_ref)[1] for g in st.session_state.guias_extras])
+
+st.title(f"💰 {st.session_state.mes_atual} / {ano_ref}")
+sel = st.selectbox("Navegar para:", ["Resumo Geral", "Custos Fixos", "Dia a Dia"] + st.session_state.guias_extras)
+st.divider()
+
+if sel == "Resumo Geral":
+    gasto_total = t_fixos + t_casuais + t_guias
+    sobra = st.session_state.renda - gasto_total
+    c1, c2 = st.columns(2)
+    c1.metric("Renda", f"R$ {st.session_state.renda:,.2f}")
+    c2.metric("Sobra", f"R$ {sobra:,.2f}")
+    st.progress(min(int((gasto_total/st.session_state.renda)*100), 100) if st.session_state.renda > 0 else 0)
+    st.write(f"Fixos: R$ {t_fixos:,.2f} | Dia a Dia: R$ {t_casuais:,.2f} | Guias: R$ {t_guias:,.2f}")
+
+elif sel == "Custos Fixos":
+    st.header("Custos Fixos")
+    ed_f = st.data_editor(st.session_state.gastos_fixos, num_rows="dynamic", use_container_width=True, hide_index=True)
+    if not ed_f.equals(st.session_state.gastos_fixos):
+        st.session_state.gastos_fixos = ed_f
+        salvar_dados_nuvem()
+
+elif sel == "Dia a Dia":
+    st.header("Gastos Diários")
+    ed_c = st.data_editor(st.session_state.gastos_casuais, num_rows="dynamic", use_container_width=True, hide_index=True,
+                         column_config={"Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY", default=datetime.now().date())})
+    if not ed_c.equals(st.session_state.gastos_casuais):
+        st.session_state.gastos_casuais = ed_c
+        salvar_dados_nuvem()
+
+else:
+    guia_sel = sel
+    df_resumo, v_total = calcular_parcelas_v2(st.session_state[f"dados_{guia_sel}"], mes_num, ano_ref)
+    st.subheader(f"Gastos de {st.session_state.mes_atual}: R$ {v_total:,.2f}")
+    
+    if not df_resumo.empty:
+        st.dataframe(df_resumo, use_container_width=True, hide_index=True)
+    else:
+        st.info("Sem gastos para este mês.")
+        
+    st.divider()
+    st.subheader("Base Histórica")
+    ed_g = st.data_editor(st.session_state[f"dados_{guia_sel}"], num_rows="dynamic", use_container_width=True, hide_index=True, key=f"editor_{guia_sel}")
+    if not ed_g.equals(st.session_state[f"dados_{guia_sel}"]):
+        st.session_state[f"dados_{guia_sel}"] = ed_g
+        salvar_dados_nuvem()
+        st.rerun()

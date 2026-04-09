@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 from fpdf import FPDF
 import unicodedata
-import base64
 
 # --- 1. FUNÇÃO DE SEGURANÇA (LOGIN) ---
 def check_password():
@@ -214,7 +213,7 @@ if check_password():
         pdf.cell(0, 8, remover_acentos(f"Sobra do Mes: R$ {sobra:.2f}"), ln=True)
         pdf.set_text_color(0,0,0)
         
-        return pdf.output(dest='S')  # bytes
+        return pdf.output(dest='S')
 
     # --- INICIALIZAÇÃO ---
     if "dados_carregados" not in st.session_state:
@@ -241,6 +240,12 @@ if check_password():
         carregar_dados_sessao()
         st.session_state.dados_carregados = True
 
+    # Inicializa estado para o PDF
+    if "pdf_bytes" not in st.session_state:
+        st.session_state.pdf_bytes = None
+    if "pdf_nome" not in st.session_state:
+        st.session_state.pdf_nome = None
+
     def get_categorias():
         return CATEGORIAS_PADRAO + st.session_state.categorias_personalizadas
 
@@ -265,10 +270,13 @@ if check_password():
             salvar_dados_nuvem()
             st.session_state.mes_atual, st.session_state.ano_atual = m_sel, a_sel
             carregar_dados_sessao()
+            # Limpa PDF anterior ao mudar de mês
+            st.session_state.pdf_bytes = None
+            st.session_state.pdf_nome = None
             st.rerun()
 
         st.divider()
-        # --- BOTÃO DE GERAR PDF ---
+        # Botão para gerar PDF
         if st.button("📄 Gerar Relatório PDF deste mês", use_container_width=True):
             with st.spinner("Gerando PDF... aguarde"):
                 mes_n = MESES[st.session_state.mes_atual]
@@ -302,17 +310,22 @@ if check_password():
                     total_renda_pdf, t_fix_pdf, t_cas_pdf, total_guias_pdf, sobra_pdf,
                     gastos_categoria_pdf
                 )
-                # Garantir que é bytes
+                # Garante que é bytes
                 if isinstance(pdf_bytes, str):
                     pdf_bytes = pdf_bytes.encode('latin-1')
-                
-                st.download_button(
-                    label="📥 Clique para baixar o PDF",
-                    data=pdf_bytes,
-                    file_name=f"relatorio_{st.session_state.mes_atual}_{st.session_state.ano_atual}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
+                st.session_state.pdf_bytes = pdf_bytes
+                st.session_state.pdf_nome = f"relatorio_{st.session_state.mes_atual}_{st.session_state.ano_atual}.pdf"
+                st.rerun()
+
+        # Exibe o botão de download se o PDF estiver disponível
+        if st.session_state.pdf_bytes is not None:
+            st.download_button(
+                label="📥 Baixar PDF",
+                data=st.session_state.pdf_bytes,
+                file_name=st.session_state.pdf_nome,
+                mime="application/pdf",
+                use_container_width=True
+            )
 
         st.divider()
         ver_projecao = st.checkbox("📈 Ver Projeção Futura (6 meses)")

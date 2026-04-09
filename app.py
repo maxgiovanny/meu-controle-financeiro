@@ -53,7 +53,6 @@ def salvar_dados_nuvem():
     if "Data" in casuais_save.columns:
         casuais_save["Data"] = casuais_save["Data"].astype(str)
     
-    # Sincroniza estado atual no histórico antes de subir para nuvem
     st.session_state.historico_fixos[mes_ano_chave] = st.session_state.gastos_fixos.to_dict("records")
     st.session_state.historico_casuais[mes_ano_chave] = casuais_save.to_dict("records")
 
@@ -69,32 +68,36 @@ def salvar_dados_nuvem():
     
     json_str = json.dumps(dados_completos)
     worksheet.update(values=[[json_str]], range_name='A1')
-    st.toast("💾 Sincronizado!", icon="✅")
+    st.toast("💾 Sincronizado com a Nuvem!", icon="✅")
 
-def carregar_dados_sessao():
+def carregar_dados_sessao(forçar_nuvem=False):
+    # Se o botão importar for clicado, ele limpa o cache e lê do Google Sheets de novo
+    if forçar_nuvem:
+        val = worksheet.acell('A1').value
+        if val:
+            d = json.loads(val)
+            st.session_state.historico_fixos = d.get("historico_fixos", {})
+            st.session_state.historico_casuais = d.get("historico_casuais", {})
+
     mes_ano_chave = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
     
-    # 1. Gastos Fixos - Lógica de Importação Reforçada
+    # 1. Gastos Fixos
     if mes_ano_chave in st.session_state.historico_fixos and len(st.session_state.historico_fixos[mes_ano_chave]) > 0:
         st.session_state.gastos_fixos = pd.DataFrame(st.session_state.historico_fixos[mes_ano_chave])
     else:
-        # Busca recursiva pelo último mês que tenha dados
         df_encontrado = None
         if st.session_state.historico_fixos:
-            # Ordena as chaves para garantir que pegamos o registro mais recente disponível
-            todas_chaves = list(st.session_state.historico_fixos.keys())
-            for chave in reversed(todas_chaves):
-                if len(st.session_state.historico_fixos[chave]) > 0:
+            chaves = list(st.session_state.historico_fixos.keys())
+            # Busca do mais recente para o mais antigo
+            for chave in reversed(chaves):
+                if chave != mes_ano_chave and len(st.session_state.historico_fixos[chave]) > 0:
                     df_base = pd.DataFrame(st.session_state.historico_fixos[chave])
                     if "Pago" in df_base.columns:
                         df_base["Pago"] = False
                     df_encontrado = df_base
                     break
         
-        if df_encontrado is not None:
-            st.session_state.gastos_fixos = df_encontrado
-        else:
-            st.session_state.gastos_fixos = pd.DataFrame(columns=["Descrição", "Valor (R$)", "Pago"])
+        st.session_state.gastos_fixos = df_encontrado if df_encontrado is not None else pd.DataFrame(columns=["Descrição", "Valor (R$)", "Pago"])
 
     # 2. Gastos Casuais
     if mes_ano_chave in st.session_state.historico_casuais:
@@ -223,14 +226,14 @@ elif sel == "Gastos Fixos":
     col_t, col_b = st.columns([3, 1])
     col_t.subheader("📌 Contas do Mês")
     
-    # Botão de Importar com Lógica Forçada
+    # Botão de Importar COM FORÇA TOTAL NA NUVEM
     if col_b.button("🔄 Importar"):
         mes_chave_atual = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
-        # Remove o registro do mês atual da memória para forçar a busca no passado
         if mes_chave_atual in st.session_state.historico_fixos:
             del st.session_state.historico_fixos[mes_chave_atual]
-        carregar_dados_sessao()
-        salvar_dados_nuvem() # Salva o resultado da importação imediatamente
+        # Aqui está a mágica: ele vai ler do Google Sheets de novo antes de preencher a tela
+        carregar_dados_sessao(forçar_nuvem=True)
+        salvar_dados_nuvem()
         st.rerun()
         
     ed_f = st.data_editor(st.session_state.gastos_fixos, num_rows="dynamic", use_container_width=True, hide_index=True)

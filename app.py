@@ -6,7 +6,6 @@ import plotly.express as px
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 from fpdf import FPDF
-import base64
 import unicodedata
 
 # --- 1. FUNÇÃO DE SEGURANÇA (LOGIN) ---
@@ -156,8 +155,8 @@ if check_password():
             texto = str(texto)
         return unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')
 
-    # --- GERAR PDF CORRIGIDO ---
-    def gerar_pdf_mes(mes_nome, ano, renda_df, fixos_df, casuais_df, guias_extras, total_renda, t_fix, t_cas, t_gui, sobra, dados_categoria):
+    # --- GERAR PDF (sem acessar st.session_state) ---
+    def gerar_pdf_mes(mes_nome, ano, renda_df, fixos_df, casuais_df, guias_dados, total_renda, t_fix, t_cas, t_gui, sobra, dados_categoria):
         pdf = FPDF()
         pdf.add_page()
         pdf.set_font('helvetica', '', 12)
@@ -194,13 +193,12 @@ if check_password():
             pdf.cell(0, 6, remover_acentos(f"{data_str} - {row['Categoria']} - {desc}: R$ {row['Valor (R$)']:.2f}"), ln=True)
         pdf.ln(5)
         
-        # Guias
+        # Guias (recebidas como dicionário: nome da guia -> lista de parcelas)
         pdf.set_font(style='B')
         pdf.cell(0, 8, remover_acentos(f"Guias (Parcelamentos): R$ {t_gui:.2f}"), ln=True)
         pdf.set_font(style='')
-        for guia in guias_extras:
-            df_g, _, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), MESES[mes_nome], ano)
-            for _, row in df_g.iterrows():
+        for guia, parcelas in guias_dados.items():
+            for row in parcelas:
                 pdf.cell(0, 6, remover_acentos(f"{guia} - {row['Descrição']} ({row['Categoria']}): R$ {row['Valor (R$)']:.2f}"), ln=True)
         pdf.ln(5)
         
@@ -221,7 +219,7 @@ if check_password():
         pdf.cell(0, 8, remover_acentos(f"Sobra do Mes: R$ {sobra:.2f}"), ln=True)
         pdf.set_text_color(0,0,0)
         
-        return pdf.output(dest='S')  # retorna bytes
+        return pdf.output(dest='S')  # bytes
 
     # --- INICIALIZAÇÃO ---
     if "dados_carregados" not in st.session_state:
@@ -275,37 +273,45 @@ if check_password():
             st.rerun()
 
         st.divider()
-        if st.button("📄 Gerar Relatório PDF deste mês", use_container_width=True):
-            mes_n = MESES[st.session_state.mes_atual]
-            ano_r = st.session_state.ano_atual
-            t_fix = st.session_state.gastos_fixos["Valor (R$)"].sum() if not st.session_state.gastos_fixos.empty else 0.0
-            t_cas = st.session_state.gastos_casuais["Valor (R$)"].sum() if not st.session_state.gastos_casuais.empty else 0.0
-            
-            total_guias = 0.0
-            gastos_categoria = {}
-            for _, row in st.session_state.gastos_casuais.iterrows():
-                cat = row["Categoria"]
-                gastos_categoria[cat] = gastos_categoria.get(cat, 0.0) + row["Valor (R$)"]
-            for guia in st.session_state.guias_extras:
-                _, tot_guia, cats_guia = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
-                total_guias += tot_guia
-                for cat, val in cats_guia.items():
-                    gastos_categoria[cat] = gastos_categoria.get(cat, 0.0) + val
-            total_renda = st.session_state.renda_detalhada["Valor (R$)"].sum()
-            sobra = total_renda - (t_fix + t_cas + total_guias)
+        # Botão de PDF com st.download_button (funciona melhor em mobile)
+        mes_n = MESES[st.session_state.mes_atual]
+        ano_r = st.session_state.ano_atual
+        t_fix_pdf = st.session_state.gastos_fixos["Valor (R$)"].sum() if not st.session_state.gastos_fixos.empty else 0.0
+        t_cas_pdf = st.session_state.gastos_casuais["Valor (R$)"].sum() if not st.session_state.gastos_casuais.empty else 0.0
+        
+        total_guias_pdf = 0.0
+        gastos_categoria_pdf = {}
+        for _, row in st.session_state.gastos_casuais.iterrows():
+            cat = row["Categoria"]
+            gastos_categoria_pdf[cat] = gastos_categoria_pdf.get(cat, 0.0) + row["Valor (R$)"]
+        
+        guias_dados = {}
+        for guia in st.session_state.guias_extras:
+            df_parc, tot_guia, cats_guia = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
+            total_guias_pdf += tot_guia
+            for cat, val in cats_guia.items():
+                gastos_categoria_pdf[cat] = gastos_categoria_pdf.get(cat, 0.0) + val
+            guias_dados[guia] = df_parc.to_dict('records')
+        
+        total_renda_pdf = st.session_state.renda_detalhada["Valor (R$)"].sum()
+        sobra_pdf = total_renda_pdf - (t_fix_pdf + t_cas_pdf + total_guias_pdf)
 
-            pdf_data = gerar_pdf_mes(
-                st.session_state.mes_atual, st.session_state.ano_atual,
-                st.session_state.renda_detalhada,
-                st.session_state.gastos_fixos,
-                st.session_state.gastos_casuais,
-                st.session_state.guias_extras,
-                total_renda, t_fix, t_cas, total_guias, sobra,
-                gastos_categoria
-            )
-            b64 = base64.b64encode(pdf_data).decode()
-            href = f'<a href="data:application/octet-stream;base64,{b64}" download="relatorio_{st.session_state.mes_atual}_{st.session_state.ano_atual}.pdf">📥 Baixar PDF</a>'
-            st.markdown(href, unsafe_allow_html=True)
+        pdf_bytes = gerar_pdf_mes(
+            st.session_state.mes_atual, st.session_state.ano_atual,
+            st.session_state.renda_detalhada,
+            st.session_state.gastos_fixos,
+            st.session_state.gastos_casuais,
+            guias_dados,
+            total_renda_pdf, t_fix_pdf, t_cas_pdf, total_guias_pdf, sobra_pdf,
+            gastos_categoria_pdf
+        )
+        st.download_button(
+            label="📄 Baixar Relatório PDF",
+            data=pdf_bytes,
+            file_name=f"relatorio_{st.session_state.mes_atual}_{st.session_state.ano_atual}.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
 
         st.divider()
         ver_projecao = st.checkbox("📈 Ver Projeção Futura (6 meses)")

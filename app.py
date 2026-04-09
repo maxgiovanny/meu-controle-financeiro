@@ -7,7 +7,9 @@ from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 from fpdf import FPDF
 import unicodedata
-import base64
+import tempfile
+import os
+import io
 
 # --- 1. FUNÇÃO DE SEGURANÇA (LOGIN) ---
 def check_password():
@@ -156,12 +158,11 @@ if check_password():
             texto = str(texto)
         return unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')
 
-    # --- GERAR PDF (retorna bytes diretamente, sem arquivo temporário) ---
+    # --- GERAR PDF COMPLETO ---
     def gerar_pdf_mes(mes_nome, ano, renda_df, fixos_df, casuais_df, guias_dados, total_renda, t_fix, t_cas, t_gui, sobra, dados_categoria):
         pdf = FPDF()
         pdf.add_page()
-        pdf.set_font('helvetica', '', 12)
-        pdf.set_font_size(16)
+        pdf.set_font('helvetica', 'B', 16)
         pdf.cell(0, 10, remover_acentos(f"Relatorio Financeiro - {mes_nome}/{ano}"), ln=True, align="C")
         pdf.ln(5)
         
@@ -211,11 +212,16 @@ if check_password():
             pdf.set_text_color(0,150,0)
         else:
             pdf.set_text_color(200,0,0)
-        pdf.cell(0, 8, remover_acentos(f"Sobra do Mes: R$ {sobra:.2f}"), ln=True)
+        pdf.cell(0, 8, remover_acentos(f"RESUMO: Sobra R$ {sobra:.2f}"), ln=True)
         pdf.set_text_color(0,0,0)
         
-        # Retorna os bytes do PDF diretamente
-        return pdf.output(dest='S')
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            temp_path = tmp.name
+        pdf.output(temp_path)
+        with open(temp_path, "rb") as f:
+            pdf_data = f.read()
+        os.remove(temp_path)
+        return pdf_data
 
     # --- INICIALIZAÇÃO ---
     if "dados_carregados" not in st.session_state:
@@ -242,11 +248,8 @@ if check_password():
         carregar_dados_sessao()
         st.session_state.dados_carregados = True
 
-    # Inicializa estado para o PDF
-    if "pdf_bytes" not in st.session_state:
-        st.session_state.pdf_bytes = None
-    if "pdf_nome" not in st.session_state:
-        st.session_state.pdf_nome = None
+    if "pdf_ready" not in st.session_state:
+        st.session_state.pdf_ready = False
 
     def get_categorias():
         return CATEGORIAS_PADRAO + st.session_state.categorias_personalizadas
@@ -272,57 +275,51 @@ if check_password():
             salvar_dados_nuvem()
             st.session_state.mes_atual, st.session_state.ano_atual = m_sel, a_sel
             carregar_dados_sessao()
-            # Limpa PDF anterior ao mudar de mês
-            st.session_state.pdf_bytes = None
-            st.session_state.pdf_nome = None
+            st.session_state.pdf_ready = False
             st.rerun()
 
         st.divider()
-        # Botão para gerar PDF
-        if st.button("📄 Gerar Relatório PDF", use_container_width=True):
+        
+        # --- GERAÇÃO DO PDF ---
+        if st.button("📄 1. Preparar Relatório PDF"):
             with st.spinner("Construindo o arquivo..."):
                 mes_n = MESES[st.session_state.mes_atual]
                 ano_r = st.session_state.ano_atual
-                t_fix_pdf = st.session_state.gastos_fixos["Valor (R$)"].sum() if not st.session_state.gastos_fixos.empty else 0.0
-                t_cas_pdf = st.session_state.gastos_casuais["Valor (R$)"].sum() if not st.session_state.gastos_casuais.empty else 0.0
+                t_fix_p = st.session_state.gastos_fixos["Valor (R$)"].sum() if not st.session_state.gastos_fixos.empty else 0.0
+                t_cas_p = st.session_state.gastos_casuais["Valor (R$)"].sum() if not st.session_state.gastos_casuais.empty else 0.0
                 
-                total_guias_pdf = 0.0
-                gastos_categoria_pdf = {}
+                total_guias_p = 0.0
+                gastos_cat_p = {}
                 for _, row in st.session_state.gastos_casuais.iterrows():
                     cat = row["Categoria"]
-                    gastos_categoria_pdf[cat] = gastos_categoria_pdf.get(cat, 0.0) + row["Valor (R$)"]
+                    gastos_cat_p[cat] = gastos_cat_p.get(cat, 0.0) + row["Valor (R$)"]
                 
-                guias_dados = {}
+                guias_dados_p = {}
                 for guia in st.session_state.guias_extras:
-                    df_parc, tot_guia, cats_guia = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
-                    total_guias_pdf += tot_guia
-                    for cat, val in cats_guia.items():
-                        gastos_categoria_pdf[cat] = gastos_categoria_pdf.get(cat, 0.0) + val
-                    guias_dados[guia] = df_parc.to_dict('records')
+                    df_parc, tot, cats = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
+                    total_guias_p += tot
+                    for cat, val in cats.items():
+                        gastos_cat_p[cat] = gastos_cat_p.get(cat, 0.0) + val
+                    guias_dados_p[guia] = df_parc.to_dict('records')
                 
-                total_renda_pdf = st.session_state.renda_detalhada["Valor (R$)"].sum()
-                sobra_pdf = total_renda_pdf - (t_fix_pdf + t_cas_pdf + total_guias_pdf)
+                total_renda_p = st.session_state.renda_detalhada["Valor (R$)"].sum()
+                sobra_p = total_renda_p - (t_fix_p + t_cas_p + total_guias_p)
 
-                pdf_bytes = gerar_pdf_mes(
+                st.session_state.pdf_data = gerar_pdf_mes(
                     st.session_state.mes_atual, st.session_state.ano_atual,
-                    st.session_state.renda_detalhada,
-                    st.session_state.gastos_fixos,
-                    st.session_state.gastos_casuais,
-                    guias_dados,
-                    total_renda_pdf, t_fix_pdf, t_cas_pdf, total_guias_pdf, sobra_pdf,
-                    gastos_categoria_pdf
+                    st.session_state.renda_detalhada, st.session_state.gastos_fixos,
+                    st.session_state.gastos_casuais, guias_dados_p,
+                    total_renda_p, t_fix_p, t_cas_p, total_guias_p, sobra_p, gastos_cat_p
                 )
-                    
-                st.session_state.pdf_bytes = pdf_bytes
-                st.session_state.pdf_nome = f"relatorio_{st.session_state.mes_atual}_{st.session_state.ano_atual}.pdf"
-                st.rerun()
+                st.session_state.pdf_ready = True
+                st.success("✅ Arquivo pronto! Clique abaixo para salvar.")
 
-        # Exibe o botão de download se o PDF estiver disponível (agora usando st.download_button)
-        if st.session_state.pdf_bytes is not None:
+        # --- DOWNLOAD DO PDF ---
+        if st.session_state.pdf_ready:
             st.download_button(
-                label="📥 Baixar PDF",
-                data=st.session_state.pdf_bytes,
-                file_name=st.session_state.pdf_nome,
+                label="📥 2. Baixar PDF Agora",
+                data=io.BytesIO(st.session_state.pdf_data),
+                file_name=f"relatorio_{st.session_state.mes_atual}_{st.session_state.ano_atual}.pdf",
                 mime="application/pdf",
                 use_container_width=True
             )
@@ -378,14 +375,14 @@ if check_password():
                 guia_mover = st.selectbox("Selecione a guia:", st.session_state.guias_extras, key="mover")
                 col1, col2 = st.columns(2)
                 with col1:
-                    if st.button("⬆️ Mover para Cima"):
+                    if st.button("⬆️ Mover Cima"):
                         idx = st.session_state.guias_extras.index(guia_mover)
                         if idx>0:
                             st.session_state.guias_extras[idx], st.session_state.guias_extras[idx-1] = st.session_state.guias_extras[idx-1], st.session_state.guias_extras[idx]
                             salvar_dados_nuvem()
                             st.rerun()
                 with col2:
-                    if st.button("⬇️ Mover para Baixo"):
+                    if st.button("⬇️ Mover Baixo"):
                         idx = st.session_state.guias_extras.index(guia_mover)
                         if idx < len(st.session_state.guias_extras)-1:
                             st.session_state.guias_extras[idx], st.session_state.guias_extras[idx+1] = st.session_state.guias_extras[idx+1], st.session_state.guias_extras[idx]

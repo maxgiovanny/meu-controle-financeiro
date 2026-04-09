@@ -53,6 +53,7 @@ def salvar_dados_nuvem():
     if "Data" in casuais_save.columns:
         casuais_save["Data"] = casuais_save["Data"].astype(str)
     
+    # Atualiza históricos
     st.session_state.historico_fixos[mes_ano_chave] = st.session_state.gastos_fixos.to_dict("records")
     st.session_state.historico_casuais[mes_ano_chave] = casuais_save.to_dict("records")
 
@@ -68,38 +69,40 @@ def salvar_dados_nuvem():
     
     json_str = json.dumps(dados_completos)
     worksheet.update(values=[[json_str]], range_name='A1')
-    st.toast("💾 Sincronizado com a Nuvem!", icon="✅")
+    st.toast("💾 Sincronizado!", icon="✅")
 
-def carregar_dados_sessao(forçar_nuvem=False):
-    # Se o botão importar for clicado, ele limpa o cache e lê do Google Sheets de novo
-    if forçar_nuvem:
+def carregar_dados_sessao(importar_manual=False):
+    mes_ano_chave = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
+    
+    # Se for manual, puxamos direto da planilha para garantir a última versão
+    if importar_manual:
         val = worksheet.acell('A1').value
         if val:
             d = json.loads(val)
             st.session_state.historico_fixos = d.get("historico_fixos", {})
-            st.session_state.historico_casuais = d.get("historico_casuais", {})
-
-    mes_ano_chave = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
     
-    # 1. Gastos Fixos
-    if mes_ano_chave in st.session_state.historico_fixos and len(st.session_state.historico_fixos[mes_ano_chave]) > 0:
+    # LÓGICA DE GASTOS FIXOS
+    # Se já existe dado (mesmo que seja uma lista vazia proposital), respeita.
+    if mes_ano_chave in st.session_state.historico_fixos and not importar_manual:
         st.session_state.gastos_fixos = pd.DataFrame(st.session_state.historico_fixos[mes_ano_chave])
     else:
+        # Tenta buscar o último mês que tenha algo
         df_encontrado = None
         if st.session_state.historico_fixos:
             chaves = list(st.session_state.historico_fixos.keys())
-            # Busca do mais recente para o mais antigo
             for chave in reversed(chaves):
                 if chave != mes_ano_chave and len(st.session_state.historico_fixos[chave]) > 0:
                     df_base = pd.DataFrame(st.session_state.historico_fixos[chave])
-                    if "Pago" in df_base.columns:
-                        df_base["Pago"] = False
+                    if "Pago" in df_base.columns: df_base["Pago"] = False
                     df_encontrado = df_base
                     break
         
-        st.session_state.gastos_fixos = df_encontrado if df_encontrado is not None else pd.DataFrame(columns=["Descrição", "Valor (R$)", "Pago"])
+        if df_encontrado is not None:
+            st.session_state.gastos_fixos = df_encontrado
+        else:
+            st.session_state.gastos_fixos = pd.DataFrame(columns=["Descrição", "Valor (R$)", "Pago"])
 
-    # 2. Gastos Casuais
+    # GASTOS CASUAIS
     if mes_ano_chave in st.session_state.historico_casuais:
         df_c = pd.DataFrame(st.session_state.historico_casuais[mes_ano_chave])
         if not df_c.empty:
@@ -147,7 +150,6 @@ def calcular_parcelas_v2(df, mes, ano):
 # --- MENU LATERAL ---
 with st.sidebar:
     st.header("⚙️ Configurações")
-    
     if st.session_state.backup_anterior:
         if st.button("🔙 Desfazer Última Ação", use_container_width=True, type="primary"):
             b = st.session_state.backup_anterior
@@ -194,7 +196,7 @@ with st.sidebar:
                 del st.session_state[f"dados_{g_focada}"]
                 salvar_dados_nuvem()
                 st.rerun()
-        if st.button("🗑️ Apagar"):
+        if st.button("🗑️ Apagar Guia"):
             criar_ponto_restauracao()
             st.session_state.guias_extras.remove(g_focada)
             if f"dados_{g_focada}" in st.session_state: del st.session_state[f"dados_{g_focada}"]
@@ -225,20 +227,13 @@ if sel == "Resumo Geral":
 elif sel == "Gastos Fixos":
     col_t, col_b = st.columns([3, 1])
     col_t.subheader("📌 Contas do Mês")
-    
-    # Botão de Importar COM FORÇA TOTAL NA NUVEM
     if col_b.button("🔄 Importar"):
-        mes_chave_atual = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
-        if mes_chave_atual in st.session_state.historico_fixos:
-            del st.session_state.historico_fixos[mes_chave_atual]
-        # Aqui está a mágica: ele vai ler do Google Sheets de novo antes de preencher a tela
-        carregar_dados_sessao(forçar_nuvem=True)
+        carregar_dados_sessao(importar_manual=True)
         salvar_dados_nuvem()
         st.rerun()
         
     ed_f = st.data_editor(st.session_state.gastos_fixos, num_rows="dynamic", use_container_width=True, hide_index=True)
     if not ed_f.equals(st.session_state.gastos_fixos):
-        criar_ponto_restauracao()
         st.session_state.gastos_fixos = ed_f
         salvar_dados_nuvem()
 
@@ -251,7 +246,6 @@ elif sel == "Dia a Dia":
             "Valor (R$)": st.column_config.NumberColumn("Valor (R$)", format="%.2f")
         })
     if not ed_c.equals(st.session_state.gastos_casuais):
-        criar_ponto_restauracao()
         st.session_state.gastos_casuais = ed_c
         salvar_dados_nuvem()
     if not st.session_state.gastos_casuais.empty:
@@ -266,7 +260,6 @@ else:
     st.divider()
     ed_g = st.data_editor(st.session_state[f"dados_{sel}"], num_rows="dynamic", use_container_width=True, hide_index=True, key=f"ed_{sel}")
     if not ed_g.equals(st.session_state[f"dados_{sel}"]):
-        criar_ponto_restauracao()
         st.session_state[f"dados_{sel}"] = ed_g
         salvar_dados_nuvem()
         st.rerun()

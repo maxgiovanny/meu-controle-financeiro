@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 
 # --- CONFIGURAÇÃO ---
-st.set_page_config(page_title="Controle Financeiro Pro", page_icon="💰", layout="centered")
+st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="centered")
 
 MESES = {"Janeiro": 1, "Fevereiro": 2, "Março": 3, "Abril": 4, "Maio": 5, "Junho": 6,
          "Julho": 7, "Agosto": 8, "Setembro": 9, "Outubro": 10, "Novembro": 11, "Dezembro": 12}
@@ -109,13 +109,8 @@ def calc_parc(df, m, a):
         except: continue
     return pd.DataFrame(at), tot
 
-# --- SIDEBAR (NAVEGAÇÃO E CONFIGS) ---
+# --- SIDEBAR ---
 with st.sidebar:
-    st.header("📂 Navegação")
-    opcoes_nav = ["Resumo Geral", "Renda", "Gastos Fixos", "Dia a Dia", "Projeção Futura", "Resumo das Guias"] + st.session_state.guias_extras
-    sel = st.radio("Ir para:", opcoes_nav)
-    
-    st.divider()
     st.header("⚙️ Configurações")
     if st.button("🔄 Recarregar Nuvem"):
         st.cache_data.clear(); st.rerun()
@@ -126,6 +121,10 @@ with st.sidebar:
         salvar_dados_nuvem(); st.session_state.mes_atual, st.session_state.ano_atual = m_sel, a_sel
         carregar_dados_sessao(); st.rerun()
 
+    # PROJEÇÃO NO MENU LATERAL (COMO PEDIDO)
+    st.divider()
+    ver_projecao = st.checkbox("📈 Ver Projeção Futura (6 meses)")
+
     st.divider(); st.subheader("🛠️ Gerenciar Guias")
     ng = st.text_input("Nova Guia:")
     if st.button("➕ Criar"):
@@ -135,10 +134,10 @@ with st.sidebar:
             salvar_dados_nuvem(); st.rerun()
 
     if st.session_state.guias_extras:
-        g_ativa = st.selectbox("Selecionar Guia:", st.session_state.guias_extras)
+        g_ativa = st.selectbox("Gerenciar Guia:", st.session_state.guias_extras)
         
-        # FUNÇÃO RENOMEAR (VOLTOU!)
-        novo_nome = st.text_input("Novo Nome:")
+        # RENOMEAR
+        novo_nome = st.text_input("Renomear para:")
         if st.button("📝 Renomear"):
             if novo_nome and novo_nome not in st.session_state.guias_extras:
                 idx = st.session_state.guias_extras.index(g_ativa)
@@ -152,7 +151,7 @@ with st.sidebar:
             if f"dados_{g_ativa}" in st.session_state: del st.session_state[f"dados_{g_ativa}"]
             salvar_dados_nuvem(); st.rerun()
 
-# --- TOTAIS ---
+# --- DEFINIÇÃO DE TOTAIS ---
 mes_n, ano_r = MESES[st.session_state.mes_atual], st.session_state.ano_atual
 t_fix = float(st.session_state.gastos_fixos["Valor (R$)"].sum()) if not st.session_state.gastos_fixos.empty else 0.0
 t_cas = float(st.session_state.gastos_casuais["Valor (R$)"].sum()) if not st.session_state.gastos_casuais.empty else 0.0
@@ -160,38 +159,10 @@ t_gui = sum([calc_parc(st.session_state.get(f"dados_{g}"), mes_n, ano_r)[1] for 
 total_renda = st.session_state.renda_detalhada["Valor (R$)"].sum()
 
 st.title(f"💰 {st.session_state.mes_atual} / {st.session_state.ano_atual}")
-st.divider()
 
-if sel == "Resumo Geral":
-    gt = t_fix + t_cas + t_gui; sobra = total_renda - gt
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Gasto Total", f"R$ {gt:,.2f}")
-    c2.metric("Sobra Real", f"R$ {sobra:,.2f}", delta=f"{(sobra/total_renda)*100:.1f}%" if total_renda > 0 else "0%")
-    c3.metric("Renda Total", f"R$ {total_renda:,.2f}")
-    fig = px.pie(pd.DataFrame({"C": ["Fixos", "Dia a Dia", "Guias", "Sobra"], "V": [t_fix, t_cas, t_gui, max(0, sobra)]}), values='V', names='C', hole=.4)
-    st.plotly_chart(fig, use_container_width=True)
-
-elif sel == "Renda":
-    st.subheader("💵 Fontes de Renda")
-    st.metric("Renda Total", f"R$ {total_renda:,.2f}")
-    er = st.data_editor(st.session_state.renda_detalhada, num_rows="dynamic", use_container_width=True, hide_index=True)
-    if not er.equals(st.session_state.renda_detalhada):
-        st.session_state.renda_detalhada = er; salvar_dados_nuvem()
-
-elif sel == "Gastos Fixos":
-    ct, cb = st.columns([3, 1]); ct.subheader("📌 Contas Fixas")
-    if cb.button("🔄 Importar"): carregar_dados_sessao(True); salvar_dados_nuvem(); st.rerun()
-    st.metric("Total da Aba", f"R$ {t_fix:,.2f}")
-    ef = st.data_editor(st.session_state.gastos_fixos, num_rows="dynamic", use_container_width=True, hide_index=True)
-    if not ef.equals(st.session_state.gastos_fixos): st.session_state.gastos_fixos = ef; salvar_dados_nuvem()
-
-elif sel == "Dia a Dia":
-    st.subheader("🛍️ Compras Casuais")
-    st.metric("Total da Aba", f"R$ {t_cas:,.2f}")
-    ec = st.data_editor(st.session_state.gastos_casuais, num_rows="dynamic", use_container_width=True, hide_index=True, column_config={"Data": st.column_config.DateColumn(format="DD/MM/YYYY"), "Categoria": st.column_config.SelectboxColumn(options=CATEGORIAS)})
-    if not ec.equals(st.session_state.gastos_casuais): st.session_state.gastos_casuais = ec; salvar_dados_nuvem()
-
-elif sel == "Projeção Futura":
+# --- LÓGICA DE EXIBIÇÃO ---
+if ver_projecao:
+    st.divider()
     st.subheader("📅 Fluxo de Caixa Previsto (6 Meses)")
     proj = []
     for i in range(6):
@@ -203,25 +174,59 @@ elif sel == "Projeção Futura":
     st.bar_chart(df_proj.set_index("Mês")[["Fixo", "Parcelas"]])
     st.table(df_proj)
 
-elif sel == "Resumo das Guias":
-    st.subheader("📊 Comparativo de Custos por Guia")
-    dados_guias = []
-    for g in st.session_state.guias_extras:
-        _, valor = calc_parc(st.session_state.get(f"dados_{g}"), mes_n, ano_r)
-        dados_guias.append({"Guia": g, "Custo Total (R$)": valor})
-    
-    if dados_guias:
-        df_guias = pd.DataFrame(dados_guias)
-        st.dataframe(df_guias, use_container_width=True, hide_index=True)
-        fig_guias = px.bar(df_guias, x="Guia", y="Custo Total (R$)", color="Guia", text_auto='.2f')
-        st.plotly_chart(fig_guias, use_container_width=True)
-    else: st.info("Nenhuma guia extra criada para análise.")
+else:
+    # SELECTBOX NO CENTRO COMO ERA ANTES
+    opcoes = ["Resumo Geral", "Renda", "Gastos Fixos", "Dia a Dia", "Resumo das Guias"] + st.session_state.guias_extras
+    sel = st.selectbox("Ir para:", opcoes)
+    st.divider()
 
-else: # Guias Extras Individuais
-    dr, vt = calc_parc(st.session_state.get(f"dados_{sel}"), mes_n, ano_r)
-    st.subheader(f"Total no Mês: R$ {vt:,.2f}")
-    if not dr.empty: st.dataframe(dr, use_container_width=True, hide_index=True)
-    st.divider(); st.write("**Base de Lançamentos:**")
-    de = st.data_editor(st.session_state[f"dados_{sel}"], num_rows="dynamic", use_container_width=True, hide_index=True)
-    if not de.equals(st.session_state[f"dados_{sel}"]):
-        st.session_state[f"dados_{sel}"] = de; salvar_dados_nuvem(); st.rerun()
+    if sel == "Resumo Geral":
+        gt = t_fix + t_cas + t_gui; sobra = total_renda - gt
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Gasto Total", f"R$ {gt:,.2f}")
+        c2.metric("Sobra Real", f"R$ {sobra:,.2f}", delta=f"{(sobra/total_renda)*100:.1f}%" if total_renda > 0 else "0%")
+        c3.metric("Renda Total", f"R$ {total_renda:,.2f}")
+        fig = px.pie(pd.DataFrame({"C": ["Fixos", "Dia a Dia", "Guias", "Sobra"], "V": [t_fix, t_cas, t_gui, max(0, sobra)]}), values='V', names='C', hole=.4)
+        st.plotly_chart(fig, use_container_width=True)
+
+    elif sel == "Renda":
+        st.subheader("💵 Fontes de Renda")
+        st.metric("Renda Total", f"R$ {total_renda:,.2f}")
+        er = st.data_editor(st.session_state.renda_detalhada, num_rows="dynamic", use_container_width=True, hide_index=True)
+        if not er.equals(st.session_state.renda_detalhada):
+            st.session_state.renda_detalhada = er; salvar_dados_nuvem()
+
+    elif sel == "Gastos Fixos":
+        ct, cb = st.columns([3, 1]); ct.subheader("📌 Contas Fixas")
+        if cb.button("🔄 Importar"): carregar_dados_sessao(True); salvar_dados_nuvem(); st.rerun()
+        st.metric("Total da Aba", f"R$ {t_fix:,.2f}")
+        ef = st.data_editor(st.session_state.gastos_fixos, num_rows="dynamic", use_container_width=True, hide_index=True)
+        if not ef.equals(st.session_state.gastos_fixos): st.session_state.gastos_fixos = ef; salvar_dados_nuvem()
+
+    elif sel == "Dia a Dia":
+        st.subheader("🛍️ Compras Casuais")
+        st.metric("Total da Aba", f"R$ {t_cas:,.2f}")
+        ec = st.data_editor(st.session_state.gastos_casuais, num_rows="dynamic", use_container_width=True, hide_index=True, column_config={"Data": st.column_config.DateColumn(format="DD/MM/YYYY"), "Categoria": st.column_config.SelectboxColumn(options=CATEGORIAS)})
+        if not ec.equals(st.session_state.gastos_casuais): st.session_state.gastos_casuais = ec; salvar_dados_nuvem()
+
+    elif sel == "Resumo das Guias":
+        st.subheader("📊 Comparativo de Custos por Guia")
+        dados_guias = []
+        for g in st.session_state.guias_extras:
+            _, valor = calc_parc(st.session_state.get(f"dados_{g}"), mes_n, ano_r)
+            dados_guias.append({"Guia": g, "Custo Total (R$)": valor})
+        if dados_guias:
+            df_guias = pd.DataFrame(dados_guias)
+            st.dataframe(df_guias, use_container_width=True, hide_index=True)
+            fig_guias = px.bar(df_guias, x="Guia", y="Custo Total (R$)", color="Guia", text_auto='.2f')
+            st.plotly_chart(fig_guias, use_container_width=True)
+        else: st.info("Nenhuma guia extra criada.")
+
+    else: # Guias Extras Individuais
+        dr, vt = calc_parc(st.session_state.get(f"dados_{sel}"), mes_n, ano_r)
+        st.subheader(f"Total no Mês: R$ {vt:,.2f}")
+        if not dr.empty: st.dataframe(dr, use_container_width=True, hide_index=True)
+        st.divider(); st.write("**Base de Lançamentos:**")
+        de = st.data_editor(st.session_state[f"dados_{sel}"], num_rows="dynamic", use_container_width=True, hide_index=True)
+        if not de.equals(st.session_state[f"dados_{sel}"]):
+            st.session_state[f"dados_{sel}"] = de; salvar_dados_nuvem(); st.rerun()

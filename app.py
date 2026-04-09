@@ -7,9 +7,8 @@ from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 
 # --- CONFIGURAÇÃO ---
-st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="centered")
+st.set_page_config(page_title="Controle Financeiro Pro", page_icon="💰", layout="centered")
 
-# Dicionário de meses corrigido
 MESES = {"Janeiro": 1, "Fevereiro": 2, "Março": 3, "Abril": 4, "Maio": 5, "Junho": 6,
          "Julho": 7, "Agosto": 8, "Setembro": 9, "Outubro": 10, "Novembro": 11, "Dezembro": 12}
 CATEGORIAS = ["Alimentação", "Transporte", "Lazer", "Saúde", "Casa", "Trabalho", "Outros"]
@@ -86,18 +85,16 @@ if "dados_carregados" not in st.session_state:
     d_raw = json.loads(val) if val else {}
     hj = datetime.now()
     st.session_state.ano_atual, st.session_state.mes_atual = hj.year, list(MESES.keys())[hj.month - 1]
-    
     st.session_state.renda_detalhada = pd.DataFrame(d_raw.get("renda_detalhada", [{"Fonte": "Salário", "Valor (R$)": 10000.0}]))
     st.session_state.guias_extras = d_raw.get("guias_extras", [])
     st.session_state.historico_fixos = d_raw.get("historico_fixos", {})
     st.session_state.historico_casuais = d_raw.get("historico_casuais", {})
-    
     for g in st.session_state.guias_extras:
         st.session_state[f"dados_{g}"] = pd.DataFrame(d_raw.get(f"dados_{g}", []))
     carregar_dados_sessao()
     st.session_state.dados_carregados = True
 
-# --- FUNÇÃO DE CÁLCULO DE PARCELAS ---
+# --- CÁLCULOS ---
 def calc_parc(df, m, a):
     at, tot = [], 0.0
     if df is None or df.empty: return pd.DataFrame(columns=["Descrição", "Parcela", "Valor (R$)"]), 0.0
@@ -112,8 +109,13 @@ def calc_parc(df, m, a):
         except: continue
     return pd.DataFrame(at), tot
 
-# --- SIDEBAR ---
+# --- SIDEBAR (NAVEGAÇÃO E CONFIGS) ---
 with st.sidebar:
+    st.header("📂 Navegação")
+    opcoes_nav = ["Resumo Geral", "Renda", "Gastos Fixos", "Dia a Dia", "Projeção Futura", "Resumo das Guias"] + st.session_state.guias_extras
+    sel = st.radio("Ir para:", opcoes_nav)
+    
+    st.divider()
     st.header("⚙️ Configurações")
     if st.button("🔄 Recarregar Nuvem"):
         st.cache_data.clear(); st.rerun()
@@ -124,7 +126,7 @@ with st.sidebar:
         salvar_dados_nuvem(); st.session_state.mes_atual, st.session_state.ano_atual = m_sel, a_sel
         carregar_dados_sessao(); st.rerun()
 
-    st.divider(); st.subheader("🛠️ Guias Extras")
+    st.divider(); st.subheader("🛠️ Gerenciar Guias")
     ng = st.text_input("Nova Guia:")
     if st.button("➕ Criar"):
         if ng and ng not in st.session_state.guias_extras:
@@ -133,26 +135,31 @@ with st.sidebar:
             salvar_dados_nuvem(); st.rerun()
 
     if st.session_state.guias_extras:
-        gf = st.selectbox("Gerenciar Guia:", st.session_state.guias_extras)
+        g_ativa = st.selectbox("Selecionar Guia:", st.session_state.guias_extras)
+        
+        # FUNÇÃO RENOMEAR (VOLTOU!)
+        novo_nome = st.text_input("Novo Nome:")
+        if st.button("📝 Renomear"):
+            if novo_nome and novo_nome not in st.session_state.guias_extras:
+                idx = st.session_state.guias_extras.index(g_ativa)
+                st.session_state.guias_extras[idx] = novo_nome
+                st.session_state[f"dados_{novo_nome}"] = st.session_state[f"dados_{g_ativa}"]
+                del st.session_state[f"dados_{g_ativa}"]
+                salvar_dados_nuvem(); st.rerun()
+
         if st.button("🗑️ Apagar"):
-            st.session_state.guias_extras.remove(gf)
-            if f"dados_{gf}" in st.session_state: del st.session_state[f"dados_{gf}"]
+            st.session_state.guias_extras.remove(g_ativa)
+            if f"dados_{g_ativa}" in st.session_state: del st.session_state[f"dados_{g_ativa}"]
             salvar_dados_nuvem(); st.rerun()
 
-# --- DEFINIÇÃO DE VARIÁVEIS DE CÁLCULO (Onde estava o erro) ---
-mes_n = MESES[st.session_state.mes_atual]
-ano_r = st.session_state.ano_atual
-
 # --- TOTAIS ---
+mes_n, ano_r = MESES[st.session_state.mes_atual], st.session_state.ano_atual
 t_fix = float(st.session_state.gastos_fixos["Valor (R$)"].sum()) if not st.session_state.gastos_fixos.empty else 0.0
 t_cas = float(st.session_state.gastos_casuais["Valor (R$)"].sum()) if not st.session_state.gastos_casuais.empty else 0.0
 t_gui = sum([calc_parc(st.session_state.get(f"dados_{g}"), mes_n, ano_r)[1] for g in st.session_state.guias_extras if f"dados_{g}" in st.session_state])
 total_renda = st.session_state.renda_detalhada["Valor (R$)"].sum()
 
-# --- NAVEGAÇÃO ---
 st.title(f"💰 {st.session_state.mes_atual} / {st.session_state.ano_atual}")
-opcoes = ["Resumo Geral", "Renda", "Gastos Fixos", "Dia a Dia", "Projeção Futura", "Análise por Categoria"] + st.session_state.guias_extras
-sel = st.selectbox("Ir para:", opcoes)
 st.divider()
 
 if sel == "Resumo Geral":
@@ -161,7 +168,6 @@ if sel == "Resumo Geral":
     c1.metric("Gasto Total", f"R$ {gt:,.2f}")
     c2.metric("Sobra Real", f"R$ {sobra:,.2f}", delta=f"{(sobra/total_renda)*100:.1f}%" if total_renda > 0 else "0%")
     c3.metric("Renda Total", f"R$ {total_renda:,.2f}")
-    
     fig = px.pie(pd.DataFrame({"C": ["Fixos", "Dia a Dia", "Guias", "Sobra"], "V": [t_fix, t_cas, t_gui, max(0, sobra)]}), values='V', names='C', hole=.4)
     st.plotly_chart(fig, use_container_width=True)
 
@@ -193,22 +199,25 @@ elif sel == "Projeção Futura":
         f_m, f_a = fut.month, fut.year
         f_g = sum([calc_parc(st.session_state.get(f"dados_{g}"), f_m, f_a)[1] for g in st.session_state.guias_extras if f"dados_{g}" in st.session_state])
         proj.append({"Mês": f"{list(MESES.keys())[f_m-1]}/{f_a}", "Fixo": t_fix, "Parcelas": f_g, "Total": t_fix + f_g})
-    
     df_proj = pd.DataFrame(proj)
     st.bar_chart(df_proj.set_index("Mês")[["Fixo", "Parcelas"]])
     st.table(df_proj)
 
-elif sel == "Análise por Categoria":
-    st.subheader("📊 Gastos por Categoria")
-    if not st.session_state.gastos_casuais.empty:
-        analise = st.session_state.gastos_casuais.groupby("Categoria")["Valor (R$)"].sum().reset_index()
-        st.dataframe(analise, use_container_width=True, hide_index=True)
-        fig_an = px.bar(analise, x="Categoria", y="Valor (R$)", color="Categoria")
-        st.plotly_chart(fig_an, use_container_width=True)
-    else: st.info("Sem gastos casuais para analisar.")
+elif sel == "Resumo das Guias":
+    st.subheader("📊 Comparativo de Custos por Guia")
+    dados_guias = []
+    for g in st.session_state.guias_extras:
+        _, valor = calc_parc(st.session_state.get(f"dados_{g}"), mes_n, ano_r)
+        dados_guias.append({"Guia": g, "Custo Total (R$)": valor})
+    
+    if dados_guias:
+        df_guias = pd.DataFrame(dados_guias)
+        st.dataframe(df_guias, use_container_width=True, hide_index=True)
+        fig_guias = px.bar(df_guias, x="Guia", y="Custo Total (R$)", color="Guia", text_auto='.2f')
+        st.plotly_chart(fig_guias, use_container_width=True)
+    else: st.info("Nenhuma guia extra criada para análise.")
 
-else: # Guias Extras
-    # Busca os dados usando os nomes de variáveis corrigidos
+else: # Guias Extras Individuais
     dr, vt = calc_parc(st.session_state.get(f"dados_{sel}"), mes_n, ano_r)
     st.subheader(f"Total no Mês: R$ {vt:,.2f}")
     if not dr.empty: st.dataframe(dr, use_container_width=True, hide_index=True)

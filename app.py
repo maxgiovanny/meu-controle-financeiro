@@ -37,8 +37,8 @@ def criar_ponto_restauracao():
     backup = {
         "renda": st.session_state.renda,
         "guias_extras": list(st.session_state.guias_extras),
-        "gastos_fixos": st.session_state.gastos_fixos.copy(),
-        "gastos_casuais": st.session_state.gastos_casuais.copy(),
+        "gastos_fixos": st.session_state.gastos_fixos.copy() if not st.session_state.gastos_fixos.empty else pd.DataFrame(columns=["Descrição", "Valor (R$)", "Pago"]),
+        "gastos_casuais": st.session_state.gastos_casuais.copy() if not st.session_state.gastos_casuais.empty else pd.DataFrame(columns=["Data", "Categoria", "Descrição", "Valor (R$)"]),
         "historico_fixos": json.loads(json.dumps(st.session_state.historico_fixos)),
         "historico_casuais": json.loads(json.dumps(st.session_state.historico_casuais))
     }
@@ -49,11 +49,13 @@ def criar_ponto_restauracao():
 
 def salvar_dados_nuvem():
     mes_ano_chave = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
+    
+    # Prepara dados casuais
     casuais_save = st.session_state.gastos_casuais.copy()
     if "Data" in casuais_save.columns:
         casuais_save["Data"] = casuais_save["Data"].astype(str)
     
-    # Atualiza históricos
+    # Atualiza históricos na sessão
     st.session_state.historico_fixos[mes_ano_chave] = st.session_state.gastos_fixos.to_dict("records")
     st.session_state.historico_casuais[mes_ano_chave] = casuais_save.to_dict("records")
 
@@ -74,35 +76,26 @@ def salvar_dados_nuvem():
 def carregar_dados_sessao(importar_manual=False):
     mes_ano_chave = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
     
-    # Se for manual, puxamos direto da planilha para garantir a última versão
     if importar_manual:
-        val = worksheet.acell('A1').value
-        if val:
-            d = json.loads(val)
-            st.session_state.historico_fixos = d.get("historico_fixos", {})
-    
-    # LÓGICA DE GASTOS FIXOS
-    # Se já existe dado (mesmo que seja uma lista vazia proposital), respeita.
-    if mes_ano_chave in st.session_state.historico_fixos and not importar_manual:
-        st.session_state.gastos_fixos = pd.DataFrame(st.session_state.historico_fixos[mes_ano_chave])
-    else:
-        # Tenta buscar o último mês que tenha algo
-        df_encontrado = None
+        # Busca agressiva do último mês com dados
+        df_base = pd.DataFrame(columns=["Descrição", "Valor (R$)", "Pago"])
         if st.session_state.historico_fixos:
             chaves = list(st.session_state.historico_fixos.keys())
             for chave in reversed(chaves):
-                if chave != mes_ano_chave and len(st.session_state.historico_fixos[chave]) > 0:
+                if len(st.session_state.historico_fixos[chave]) > 0:
                     df_base = pd.DataFrame(st.session_state.historico_fixos[chave])
                     if "Pago" in df_base.columns: df_base["Pago"] = False
-                    df_encontrado = df_base
                     break
-        
-        if df_encontrado is not None:
-            st.session_state.gastos_fixos = df_encontrado
-        else:
-            st.session_state.gastos_fixos = pd.DataFrame(columns=["Descrição", "Valor (R$)", "Pago"])
+        st.session_state.gastos_fixos = df_base
+        salvar_dados_nuvem()
+        return
 
-    # GASTOS CASUAIS
+    # Carregamento normal
+    if mes_ano_chave in st.session_state.historico_fixos:
+        st.session_state.gastos_fixos = pd.DataFrame(st.session_state.historico_fixos[mes_ano_chave])
+    else:
+        st.session_state.gastos_fixos = pd.DataFrame(columns=["Descrição", "Valor (R$)", "Pago"])
+
     if mes_ano_chave in st.session_state.historico_casuais:
         df_c = pd.DataFrame(st.session_state.historico_casuais[mes_ano_chave])
         if not df_c.empty:
@@ -205,8 +198,18 @@ with st.sidebar:
 
 # --- INTERFACE ---
 mes_n, ano_r = MESES[st.session_state.mes_atual], st.session_state.ano_atual
-t_fix = st.session_state.gastos_fixos["Valor (R$)"].sum() if not st.session_state.gastos_fixos.empty else 0.0
-t_cas = st.session_state.gastos_casuais["Valor (R$)"].sum() if not st.session_state.gastos_casuais.empty else 0.0
+
+# Proteção contra erros de soma (TypeError)
+try:
+    t_fix = float(st.session_state.gastos_fixos["Valor (R$)"].sum())
+except:
+    t_fix = 0.0
+
+try:
+    t_cas = float(st.session_state.gastos_casuais["Valor (R$)"].sum())
+except:
+    t_cas = 0.0
+
 t_gui = sum([calcular_parcelas_v2(st.session_state.get(f"dados_{g}"), mes_n, ano_r)[1] for g in st.session_state.guias_extras])
 
 st.title(f"💰 {st.session_state.mes_atual} / {ano_r}")
@@ -229,7 +232,6 @@ elif sel == "Gastos Fixos":
     col_t.subheader("📌 Contas do Mês")
     if col_b.button("🔄 Importar"):
         carregar_dados_sessao(importar_manual=True)
-        salvar_dados_nuvem()
         st.rerun()
         
     ed_f = st.data_editor(st.session_state.gastos_fixos, num_rows="dynamic", use_container_width=True, hide_index=True)
@@ -250,8 +252,11 @@ elif sel == "Dia a Dia":
         salvar_dados_nuvem()
     if not st.session_state.gastos_casuais.empty:
         st.divider()
-        st.write("**Total por Categoria:**")
-        st.dataframe(st.session_state.gastos_casuais.groupby("Categoria")["Valor (R$)"].sum().reset_index(), use_container_width=True, hide_index=True)
+        try:
+            res_cat = st.session_state.gastos_casuais.groupby("Categoria")["Valor (R$)"].sum().reset_index()
+            st.dataframe(res_cat, use_container_width=True, hide_index=True)
+        except:
+            st.info("Adicione valores para ver o resumo por categoria.")
 
 else:
     df_res, v_tot = calcular_parcelas_v2(st.session_state.get(f"dados_{sel}"), mes_n, ano_r)

@@ -134,7 +134,6 @@ def calc_parc(df, m, a):
 with st.sidebar:
     st.header("⚙️ Configurações")
     if st.button("🔄 Recarregar Nuvem"):
-        # Recarrega os dados da planilha e atualiza o session_state
         novos_dados = carregar_dados_nuvem_raw()
         st.session_state.renda_detalhada = pd.DataFrame(novos_dados.get("renda_detalhada", [{"Fonte": "Salário", "Valor (R$)": 10000.0}]))
         st.session_state.guias_extras = novos_dados.get("guias_extras", [])
@@ -153,37 +152,38 @@ with st.sidebar:
         carregar_dados_sessao()
         st.rerun()
 
-    # Checkbox da projeção (mantido no menu lateral)
     st.divider()
     ver_projecao = st.checkbox("📈 Ver Projeção Futura (6 meses)")
 
     st.divider()
     st.subheader("🛠️ Gerenciar Guias")
-    ng = st.text_input("Nova Guia:")
-    if st.button("➕ Criar"):
-        if ng and ng not in st.session_state.guias_extras:
-            st.session_state.guias_extras.append(ng)
-            st.session_state[f"dados_{ng}"] = pd.DataFrame(columns=["Descrição", "Valor Parcela (R$)", "Mês Início (1-12)", "Ano Início", "Qtd Parcelas"])
-            salvar_dados_nuvem()
-            st.rerun()
-
-    if st.session_state.guias_extras:
-        g_ativa = st.selectbox("Gerenciar Guia:", st.session_state.guias_extras)
-        novo_nome = st.text_input("Renomear para:")
-        if st.button("📝 Renomear"):
-            if novo_nome and novo_nome not in st.session_state.guias_extras:
-                idx = st.session_state.guias_extras.index(g_ativa)
-                st.session_state.guias_extras[idx] = novo_nome
-                st.session_state[f"dados_{novo_nome}"] = st.session_state[f"dados_{g_ativa}"]
-                del st.session_state[f"dados_{g_ativa}"]
+    # --- Expansor para ocultar as opções de gerenciamento ---
+    with st.expander("⚙️ Opções de gerenciamento (clique para expandir)"):
+        ng = st.text_input("Nova Guia:")
+        if st.button("➕ Criar"):
+            if ng and ng not in st.session_state.guias_extras:
+                st.session_state.guias_extras.append(ng)
+                st.session_state[f"dados_{ng}"] = pd.DataFrame(columns=["Descrição", "Valor Parcela (R$)", "Mês Início (1-12)", "Ano Início", "Qtd Parcelas"])
                 salvar_dados_nuvem()
                 st.rerun()
-        if st.button("🗑️ Apagar"):
-            st.session_state.guias_extras.remove(g_ativa)
-            if f"dados_{g_ativa}" in st.session_state:
-                del st.session_state[f"dados_{g_ativa}"]
-            salvar_dados_nuvem()
-            st.rerun()
+
+        if st.session_state.guias_extras:
+            g_ativa = st.selectbox("Guia para editar:", st.session_state.guias_extras)
+            novo_nome = st.text_input("Renomear para:")
+            if st.button("📝 Renomear"):
+                if novo_nome and novo_nome not in st.session_state.guias_extras:
+                    idx = st.session_state.guias_extras.index(g_ativa)
+                    st.session_state.guias_extras[idx] = novo_nome
+                    st.session_state[f"dados_{novo_nome}"] = st.session_state[f"dados_{g_ativa}"]
+                    del st.session_state[f"dados_{g_ativa}"]
+                    salvar_dados_nuvem()
+                    st.rerun()
+            if st.button("🗑️ Apagar"):
+                st.session_state.guias_extras.remove(g_ativa)
+                if f"dados_{g_ativa}" in st.session_state:
+                    del st.session_state[f"dados_{g_ativa}"]
+                salvar_dados_nuvem()
+                st.rerun()
 
 # --- DEFINIÇÃO DE TOTAIS (MÊS ATUAL) ---
 mes_n, ano_r = MESES[st.session_state.mes_atual], st.session_state.ano_atual
@@ -194,7 +194,7 @@ total_renda = st.session_state.renda_detalhada["Valor (R$)"].sum()
 
 st.title(f"💰 {st.session_state.mes_atual} / {st.session_state.ano_atual}")
 
-# --- INTERFACE PRINCIPAL (sempre visível) ---
+# --- INTERFACE PRINCIPAL ---
 opcoes = ["Resumo Geral", "Renda", "Gastos Fixos", "Dia a Dia", "Resumo das Guias"] + st.session_state.guias_extras
 sel = st.selectbox("Ir para:", opcoes)
 st.divider()
@@ -274,6 +274,9 @@ elif sel == "Resumo das Guias":
         st.dataframe(df_guias, use_container_width=True, hide_index=True)
         fig_guias = px.bar(df_guias, x="Guia", y="Custo Total (R$)", color="Guia", text_auto='.2f')
         st.plotly_chart(fig_guias, use_container_width=True)
+        # --- TOTAL GERAL DAS GUIAS ---
+        total_guias = df_guias["Custo Total (R$)"].sum()
+        st.metric("💰 Total Geral de Todas as Guias", f"R$ {total_guias:,.2f}")
     else:
         st.info("Nenhuma guia extra criada.")
 
@@ -301,7 +304,7 @@ else:  # Guias Extras Individuais
         salvar_dados_nuvem()
         st.rerun()
 
-# --- PROJEÇÃO FUTURA (exibida abaixo da interface principal, quando checkbox marcada) ---
+# --- PROJEÇÃO FUTURA (exibida abaixo, se marcada) ---
 if ver_projecao:
     st.divider()
     st.subheader("📅 Fluxo de Caixa Previsto (6 Meses)")
@@ -319,7 +322,7 @@ if ver_projecao:
         meses_anteriores.append((ano_c, mes_c))
     media_casuais = recalcular_media_casuais(meses_anteriores)
     if media_casuais == 0 and t_cas > 0:
-        media_casuais = t_cas  # fallback para o mês atual
+        media_casuais = t_cas
 
     proj = []
     for i in range(6):
@@ -328,10 +331,8 @@ if ver_projecao:
         while mes_futuro > 12:
             mes_futuro -= 12
             ano_futuro += 1
-        # Calcula parcelas das guias para o mês futuro
         total_guias = sum([calc_parc(st.session_state.get(f"dados_{g}"), mes_futuro, ano_futuro)[1]
                            for g in st.session_state.guias_extras if f"dados_{g}" in st.session_state])
-        # Nota: gastos fixos consideramos constantes (t_fix) – melhoria futura poderia usar recorrência
         total_despesas = t_fix + media_casuais + total_guias
         sobra_proj = total_renda - total_despesas
         proj.append({
@@ -344,13 +345,10 @@ if ver_projecao:
             "Sobra": sobra_proj
         })
     df_proj = pd.DataFrame(proj)
-    # Gráfico com Plotly
     fig_proj = px.bar(df_proj, x="Mês", y=["Fixos", "Casuais (média)", "Guias"],
                       title="Composição das Despesas (Próximos 6 Meses)",
                       barmode="stack", text_auto='.2f')
     st.plotly_chart(fig_proj, use_container_width=True)
-
-    # Tabela detalhada
     st.dataframe(df_proj.style.format({
         "Renda": "R$ {:.2f}",
         "Fixos": "R$ {:.2f}",
@@ -359,7 +357,5 @@ if ver_projecao:
         "Despesa Total": "R$ {:.2f}",
         "Sobra": "R$ {:.2f}"
     }), use_container_width=True)
-
-    # Alerta se alguma sobra projetada for negativa
     if (df_proj["Sobra"] < 0).any():
         st.warning("⚠️ Atenção: há meses com sobra negativa prevista. Revise seus gastos ou aumente a renda.")

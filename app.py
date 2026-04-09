@@ -5,20 +5,21 @@ import gspread
 import plotly.express as px
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
+from fpdf import FPDF
+import base64
+import io
 
 # --- 1. FUNÇÃO DE SEGURANÇA (LOGIN) ---
 def check_password():
     """Retorna True se o usuário inseriu a senha correta."""
     def password_entered():
-        """Verifica se a senha digitada coincide com o secrets."""
         if st.session_state["password"] == st.secrets["password"]:
             st.session_state["password_correct"] = True
-            del st.session_state["password"]  # Limpa a senha do estado
+            del st.session_state["password"]
         else:
             st.session_state["password_correct"] = False
 
     if "password_correct" not in st.session_state:
-        # Tela de Login
         st.title("🔒 Acesso Restrito")
         st.text_input(
             "Digite a senha para acessar o Controle Financeiro:", 
@@ -28,7 +29,6 @@ def check_password():
         )
         return False
     elif not st.session_state["password_correct"]:
-        # Senha incorreta
         st.title("🔒 Acesso Restrito")
         st.text_input(
             "Senha incorreta. Tente novamente:", 
@@ -42,15 +42,13 @@ def check_password():
         return True
 
 # --- 2. INÍCIO DO APLICATIVO ---
-# Só executa o restante se o login for bem-sucedido
 if check_password():
 
-    # --- CONFIGURAÇÃO ---
     st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="centered")
 
     MESES = {"Janeiro": 1, "Fevereiro": 2, "Março": 3, "Abril": 4, "Maio": 5, "Junho": 6,
              "Julho": 7, "Agosto": 8, "Setembro": 9, "Outubro": 10, "Novembro": 11, "Dezembro": 12}
-    CATEGORIAS = ["Alimentação", "Transporte", "Lazer", "Saúde", "Casa", "Trabalho", "Outros"]
+    CATEGORIAS_PADRAO = ["Alimentação", "Transporte", "Lazer", "Saúde", "Casa", "Trabalho", "Outros"]
 
     # --- CONEXÃO GOOGLE SHEETS ---
     @st.cache_resource
@@ -80,17 +78,14 @@ if check_password():
 
         st.session_state.historico_fixos[chave] = st.session_state.gastos_fixos.to_dict("records")
         st.session_state.historico_casuais[chave] = casuais_save.to_dict("records")
-        
-        # --- Salvar renda por mês ---
-        if "renda_por_mes" not in st.session_state:
-            st.session_state.renda_por_mes = {}
         st.session_state.renda_por_mes[chave] = st.session_state.renda_detalhada.to_dict("records")
-
+        
         dados = {
             "renda_por_mes": st.session_state.renda_por_mes,
             "guias_extras": st.session_state.guias_extras,
             "historico_fixos": st.session_state.historico_fixos,
-            "historico_casuais": st.session_state.historico_casuais
+            "historico_casuais": st.session_state.historico_casuais,
+            "categorias_personalizadas": st.session_state.categorias_personalizadas
         }
         for g in st.session_state.guias_extras:
             if f"dados_{g}" in st.session_state:
@@ -127,19 +122,11 @@ if check_password():
             df_c["Data"] = pd.to_datetime(df_c["Data"]).dt.date
         st.session_state.gastos_casuais = df_c if not df_c.empty else pd.DataFrame(columns=["Data", "Categoria", "Descrição", "Valor (R$)"])
 
-        # --- Carregar renda do mês atual ---
-        if "renda_por_mes" in st.session_state:
-            renda_data = st.session_state.renda_por_mes.get(chave_atual)
-            if renda_data:
-                st.session_state.renda_detalhada = pd.DataFrame(renda_data)
-            else:
-                st.session_state.renda_detalhada = pd.DataFrame([{"Fonte": "Salário", "Valor (R$)": 0.0}])
+        renda_data = st.session_state.renda_por_mes.get(chave_atual)
+        if renda_data:
+            st.session_state.renda_detalhada = pd.DataFrame(renda_data)
         else:
-            # Fallback para estrutura antiga (global)
-            if "renda_detalhada" in st.session_state:
-                st.session_state.renda_detalhada = st.session_state.renda_detalhada
-            else:
-                st.session_state.renda_detalhada = pd.DataFrame([{"Fonte": "Salário", "Valor (R$)": 0.0}])
+            st.session_state.renda_detalhada = pd.DataFrame([{"Fonte": "Salário", "Valor (R$)": 0.0}])
 
     def recalcular_media_casuais(anos_meses):
         valores = []
@@ -151,44 +138,117 @@ if check_password():
                     valores.append(df_mes["Valor (R$)"].sum())
         return sum(valores) / len(valores) if valores else 0.0
 
-    # --- INICIALIZAÇÃO ---
-    if "dados_carregados" not in st.session_state:
-        dados_raw = carregar_dados_nuvem_raw()
-        hj = datetime.now()
-        st.session_state.ano_atual, st.session_state.mes_atual = hj.year, list(MESES.keys())[hj.month - 1]
-
-        # Carregar estruturas principais
-        st.session_state.guias_extras = dados_raw.get("guias_extras", [])
-        st.session_state.historico_fixos = dados_raw.get("historico_fixos", {})
-        st.session_state.historico_casuais = dados_raw.get("historico_casuais", {})
-        st.session_state.renda_por_mes = dados_raw.get("renda_por_mes", {})
-        
-        # Se existia renda global antiga, migrar para o mês atual
-        if "renda_detalhada" in dados_raw and "renda_por_mes" not in dados_raw:
-            renda_antiga = dados_raw["renda_detalhada"]
-            chave_atual = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
-            st.session_state.renda_por_mes[chave_atual] = renda_antiga
-        
-        for g in st.session_state.guias_extras:
-            st.session_state[f"dados_{g}"] = pd.DataFrame(dados_raw.get(f"dados_{g}", []))
-        
-        carregar_dados_sessao()
-        st.session_state.dados_carregados = True
-
-    # --- CÁLCULOS ---
-    def calc_parc(df, m, a):
-        at, tot = [], 0.0
-        if df is None or df.empty: return pd.DataFrame(columns=["Descrição", "Parcela", "Valor (R$)"]), 0.0
+    def calc_parc_com_categoria(df, m, a):
+        """Retorna DataFrame das parcelas do mês com categoria e total por categoria"""
+        parcelas = []
+        if df is None or df.empty:
+            return pd.DataFrame(columns=["Descrição", "Categoria", "Valor (R$)"]), 0.0, {}
         df_v = df.dropna(subset=["Descrição", "Valor Parcela (R$)"])
         for _, r in df_v[df_v["Descrição"] != ""].iterrows():
             try:
                 m_i, a_i, qtd, v = int(r["Mês Início (1-12)"]), int(r["Ano Início"]), int(r["Qtd Parcelas"]), float(r["Valor Parcela (R$)"])
                 alvo, ini = a * 12 + m, a_i * 12 + m_i
                 if ini <= alvo <= (ini + qtd - 1):
-                    at.append({"Descrição": r["Descrição"], "Parcela": f"{alvo-ini+1}/{qtd}", "Valor (R$)": v})
-                    tot += v
-            except: continue
-        return pd.DataFrame(at), tot
+                    categoria = r.get("Categoria", "Outros")
+                    parcelas.append({"Descrição": r["Descrição"], "Categoria": categoria, "Valor (R$)": v})
+            except:
+                continue
+        df_parc = pd.DataFrame(parcelas)
+        total = df_parc["Valor (R$)"].sum() if not df_parc.empty else 0.0
+        soma_cat = df_parc.groupby("Categoria")["Valor (R$)"].sum().to_dict() if not df_parc.empty else {}
+        return df_parc, total, soma_cat
+
+    # --- INICIALIZAÇÃO ---
+    if "dados_carregados" not in st.session_state:
+        dados_raw = carregar_dados_nuvem_raw()
+        hj = datetime.now()
+        st.session_state.ano_atual, st.session_state.mes_atual = hj.year, list(MESES.keys())[hj.month - 1]
+
+        st.session_state.guias_extras = dados_raw.get("guias_extras", [])
+        st.session_state.historico_fixos = dados_raw.get("historico_fixos", {})
+        st.session_state.historico_casuais = dados_raw.get("historico_casuais", {})
+        st.session_state.renda_por_mes = dados_raw.get("renda_por_mes", {})
+        st.session_state.categorias_personalizadas = dados_raw.get("categorias_personalizadas", [])
+        
+        # Migração para novo formato de guias extras (com categoria)
+        for g in st.session_state.guias_extras:
+            dados_g = dados_raw.get(f"dados_{g}", [])
+            if dados_g and isinstance(dados_g, list) and len(dados_g) > 0:
+                # Verifica se já tem a coluna Categoria
+                if "Categoria" not in dados_g[0]:
+                    for item in dados_g:
+                        item["Categoria"] = "Outros"
+            st.session_state[f"dados_{g}"] = pd.DataFrame(dados_g)
+            # Se vazio, cria com coluna Categoria
+            if st.session_state[f"dados_{g}"].empty:
+                st.session_state[f"dados_{g}"] = pd.DataFrame(columns=["Descrição", "Valor Parcela (R$)", "Mês Início (1-12)", "Ano Início", "Qtd Parcelas", "Categoria"])
+        
+        carregar_dados_sessao()
+        st.session_state.dados_carregados = True
+
+    # --- OBTEM LISTA COMPLETA DE CATEGORIAS ---
+    def get_categorias():
+        return CATEGORIAS_PADRAO + st.session_state.categorias_personalizadas
+
+    # --- FUNÇÃO PARA GERAR PDF ---
+    def gerar_pdf_mes(mes_nome, ano, renda_df, fixos_df, casuais_df, guias_extras, total_renda, t_fix, t_cas, t_gui, sobra, dados_categoria):
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font("Arial", "B", 16)
+        pdf.cell(0, 10, f"Relatório Financeiro - {mes_nome}/{ano}", ln=True, align="C")
+        pdf.ln(5)
+        
+        # Renda
+        pdf.set_font("Arial", "B", 12)
+        pdf.cell(0, 8, "Renda Total: R$ {:.2f}".format(total_renda), ln=True)
+        pdf.set_font("Arial", "", 10)
+        for _, row in renda_df.iterrows():
+            pdf.cell(0, 6, f"{row['Fonte']}: R$ {row['Valor (R$)']:.2f}", ln=True)
+        pdf.ln(5)
+        
+        # Despesas Fixas
+        pdf.set_font("Arial", "B", 12)
+        pdf.cell(0, 8, f"Despesas Fixas: R$ {t_fix:.2f}", ln=True)
+        pdf.set_font("Arial", "", 10)
+        for _, row in fixos_df.iterrows():
+            status = "Pago" if row.get("Pago", False) else "Pendente"
+            pdf.cell(0, 6, f"{row['Descrição']}: R$ {row['Valor (R$)']:.2f} ({status})", ln=True)
+        pdf.ln(5)
+        
+        # Despesas Casuais
+        pdf.set_font("Arial", "B", 12)
+        pdf.cell(0, 8, f"Despesas do Dia a Dia: R$ {t_cas:.2f}", ln=True)
+        pdf.set_font("Arial", "", 10)
+        for _, row in casuais_df.iterrows():
+            pdf.cell(0, 6, f"{row['Data']} - {row['Categoria']} - {row['Descrição']}: R$ {row['Valor (R$)']:.2f}", ln=True)
+        pdf.ln(5)
+        
+        # Guias Extras
+        pdf.set_font("Arial", "B", 12)
+        pdf.cell(0, 8, f"Guias (Parcelamentos): R$ {t_gui:.2f}", ln=True)
+        pdf.set_font("Arial", "", 10)
+        for guia in guias_extras:
+            df_g, _, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), MESES[mes_nome], ano)
+            for _, row in df_g.iterrows():
+                pdf.cell(0, 6, f"{guia} - {row['Descrição']} ({row['Categoria']}): R$ {row['Valor (R$)']:.2f}", ln=True)
+        pdf.ln(5)
+        
+        # Resumo por Categoria
+        pdf.set_font("Arial", "B", 12)
+        pdf.cell(0, 8, "Gastos por Categoria", ln=True)
+        pdf.set_font("Arial", "", 10)
+        for cat, valor in dados_categoria.items():
+            pdf.cell(0, 6, f"{cat}: R$ {valor:.2f}", ln=True)
+        pdf.ln(5)
+        
+        # Sobra
+        pdf.set_font("Arial", "B", 12)
+        cor = (0, 255, 0) if sobra >= 0 else (255, 0, 0)
+        pdf.set_text_color(*cor)
+        pdf.cell(0, 8, f"Sobra do Mês: R$ {sobra:.2f}", ln=True)
+        pdf.set_text_color(0, 0, 0)
+        
+        return pdf.output(dest='S').encode('latin-1')
 
     # --- SIDEBAR ---
     with st.sidebar:
@@ -199,6 +259,7 @@ if check_password():
             st.session_state.historico_fixos = novos_dados.get("historico_fixos", {})
             st.session_state.historico_casuais = novos_dados.get("historico_casuais", {})
             st.session_state.renda_por_mes = novos_dados.get("renda_por_mes", {})
+            st.session_state.categorias_personalizadas = novos_dados.get("categorias_personalizadas", [])
             for g in st.session_state.guias_extras:
                 st.session_state[f"dados_{g}"] = pd.DataFrame(novos_dados.get(f"dados_{g}", []))
             carregar_dados_sessao()
@@ -216,13 +277,28 @@ if check_password():
         ver_projecao = st.checkbox("📈 Ver Projeção Futura (6 meses)")
 
         st.divider()
+        st.subheader("🏷️ Categorias Personalizadas")
+        nova_cat = st.text_input("Nova categoria:")
+        if st.button("➕ Adicionar Categoria"):
+            if nova_cat and nova_cat not in get_categorias():
+                st.session_state.categorias_personalizadas.append(nova_cat)
+                salvar_dados_nuvem()
+                st.rerun()
+        if st.session_state.categorias_personalizadas:
+            cat_remover = st.selectbox("Remover categoria:", [""] + st.session_state.categorias_personalizadas)
+            if cat_remover and st.button("🗑️ Remover"):
+                st.session_state.categorias_personalizadas.remove(cat_remover)
+                salvar_dados_nuvem()
+                st.rerun()
+
+        st.divider()
         st.subheader("🛠️ Gerenciar Guias")
         with st.expander("⚙️ Opções de gerenciamento"):
             ng = st.text_input("Nova Guia:")
             if st.button("➕ Criar"):
                 if ng and ng not in st.session_state.guias_extras:
                     st.session_state.guias_extras.append(ng)
-                    st.session_state[f"dados_{ng}"] = pd.DataFrame(columns=["Descrição", "Valor Parcela (R$)", "Mês Início (1-12)", "Ano Início", "Qtd Parcelas"])
+                    st.session_state[f"dados_{ng}"] = pd.DataFrame(columns=["Descrição", "Valor Parcela (R$)", "Mês Início (1-12)", "Ano Início", "Qtd Parcelas", "Categoria"])
                     salvar_dados_nuvem()
                     st.rerun()
 
@@ -244,7 +320,6 @@ if check_password():
                     salvar_dados_nuvem()
                     st.rerun()
 
-                # Reordenar guias
                 st.markdown("---")
                 st.write("🔼 **Reordenar Guias**")
                 guia_mover = st.selectbox("Selecione a guia para mover:", st.session_state.guias_extras, key="mover_guia")
@@ -256,8 +331,7 @@ if check_password():
                             st.session_state.guias_extras[idx], st.session_state.guias_extras[idx-1] = st.session_state.guias_extras[idx-1], st.session_state.guias_extras[idx]
                             salvar_dados_nuvem()
                             st.rerun()
-                        else:
-                            st.warning("Já está no topo.")
+                        else: st.warning("Já está no topo.")
                 with col2:
                     if st.button("⬇️ Mover para Baixo"):
                         idx = st.session_state.guias_extras.index(guia_mover)
@@ -265,38 +339,68 @@ if check_password():
                             st.session_state.guias_extras[idx], st.session_state.guias_extras[idx+1] = st.session_state.guias_extras[idx+1], st.session_state.guias_extras[idx]
                             salvar_dados_nuvem()
                             st.rerun()
-                        else:
-                            st.warning("Já está no final.")
+                        else: st.warning("Já está no final.")
 
-    # --- DEFINIÇÃO DE TOTAIS ---
+    # --- CÁLCULOS DO MÊS ---
     mes_n, ano_r = MESES[st.session_state.mes_atual], st.session_state.ano_atual
     t_fix = float(st.session_state.gastos_fixos["Valor (R$)"].sum()) if not st.session_state.gastos_fixos.empty else 0.0
     t_cas = float(st.session_state.gastos_casuais["Valor (R$)"].sum()) if not st.session_state.gastos_casuais.empty else 0.0
-    t_gui = sum([calc_parc(st.session_state.get(f"dados_{g}"), mes_n, ano_r)[1] for g in st.session_state.guias_extras if f"dados_{g}" in st.session_state])
+    
+    # Soma das guias e agregação por categoria
+    total_guias = 0.0
+    gastos_categoria = {}
+    # Adiciona despesas casuais
+    for _, row in st.session_state.gastos_casuais.iterrows():
+        cat = row["Categoria"]
+        gastos_categoria[cat] = gastos_categoria.get(cat, 0.0) + row["Valor (R$)"]
+    
+    for guia in st.session_state.guias_extras:
+        _, tot_guia, cats_guia = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
+        total_guias += tot_guia
+        for cat, val in cats_guia.items():
+            gastos_categoria[cat] = gastos_categoria.get(cat, 0.0) + val
+    
     total_renda = st.session_state.renda_detalhada["Valor (R$)"].sum()
-
-    st.title(f"💰 {st.session_state.mes_atual} / {st.session_state.ano_atual}")
+    sobra = total_renda - (t_fix + t_cas + total_guias)
 
     # --- INTERFACE PRINCIPAL ---
+    st.title(f"💰 {st.session_state.mes_atual} / {st.session_state.ano_atual}")
+
+    # Botão de relatório PDF
+    col_pdf, _ = st.columns([1, 5])
+    with col_pdf:
+        if st.button("📄 Gerar Relatório PDF deste mês"):
+            pdf_data = gerar_pdf_mes(
+                st.session_state.mes_atual, st.session_state.ano_atual,
+                st.session_state.renda_detalhada,
+                st.session_state.gastos_fixos,
+                st.session_state.gastos_casuais,
+                st.session_state.guias_extras,
+                total_renda, t_fix, t_cas, total_guias, sobra,
+                gastos_categoria
+            )
+            b64 = base64.b64encode(pdf_data).decode()
+            href = f'<a href="data:application/octet-stream;base64,{b64}" download="relatorio_{st.session_state.mes_atual}_{st.session_state.ano_atual}.pdf">📥 Clique para baixar o PDF</a>'
+            st.markdown(href, unsafe_allow_html=True)
+    st.divider()
+
     opcoes = ["Resumo Geral", "Renda", "Gastos Fixos", "Dia a Dia", "Resumo das Guias"] + st.session_state.guias_extras
     sel = st.selectbox("Ir para:", opcoes)
     st.divider()
 
     if sel == "Resumo Geral":
-        gt = t_fix + t_cas + t_gui
-        sobra = total_renda - gt
+        gt = t_fix + t_cas + total_guias
         c1, c2, c3 = st.columns(3)
         c1.metric("Gasto Total", f"R$ {gt:,.2f}")
         c2.metric("Sobra Real", f"R$ {sobra:,.2f}", delta=f"{(sobra/total_renda)*100:.1f}%" if total_renda > 0 else "0%")
         c3.metric("Renda Total", f"R$ {total_renda:,.2f}")
-        fig = px.pie(pd.DataFrame({"C": ["Fixos", "Dia a Dia", "Guias", "Sobra"], "V": [t_fix, t_cas, t_gui, max(0, sobra)]}),
+        fig = px.pie(pd.DataFrame({"C": ["Fixos", "Dia a Dia", "Guias", "Sobra"], "V": [t_fix, t_cas, total_guias, max(0, sobra)]}),
                      values='V', names='C', hole=.4)
         fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300)
         st.plotly_chart(fig, use_container_width=True)
 
     elif sel == "Renda":
         st.subheader("💵 Fontes de Renda")
-        st.metric("Renda Total", f"R$ {total_renda:,.2f}")
         er = st.data_editor(st.session_state.renda_detalhada, num_rows="dynamic", use_container_width=True, hide_index=True,
                             column_config={"Valor (R$)": st.column_config.NumberColumn(min_value=0, format="R$ %.2f")})
         if not er.equals(st.session_state.renda_detalhada):
@@ -310,7 +414,6 @@ if check_password():
             carregar_dados_sessao(True)
             salvar_dados_nuvem()
             st.rerun()
-        st.metric("Total da Aba", f"R$ {t_fix:,.2f}")
         ef = st.data_editor(st.session_state.gastos_fixos, num_rows="dynamic", use_container_width=True, hide_index=True,
                             column_config={"Valor (R$)": st.column_config.NumberColumn(format="R$ %.2f", min_value=0),
                                            "Pago": st.column_config.CheckboxColumn()})
@@ -320,10 +423,9 @@ if check_password():
 
     elif sel == "Dia a Dia":
         st.subheader("🛍️ Compras Casuais")
-        st.metric("Total da Aba", f"R$ {t_cas:,.2f}")
         ec = st.data_editor(st.session_state.gastos_casuais, num_rows="dynamic", use_container_width=True, hide_index=True,
                             column_config={"Data": st.column_config.DateColumn(format="DD/MM/YYYY"),
-                                           "Categoria": st.column_config.SelectboxColumn(options=CATEGORIAS),
+                                           "Categoria": st.column_config.SelectboxColumn(options=get_categorias()),
                                            "Valor (R$)": st.column_config.NumberColumn(format="R$ %.2f", min_value=0)})
         if not ec.equals(st.session_state.gastos_casuais):
             st.session_state.gastos_casuais = ec
@@ -331,10 +433,12 @@ if check_password():
 
     elif sel == "Resumo das Guias":
         st.subheader("📊 Comparativo de Custos por Guia")
-        dados_guias = [{"Guia": g, "Custo Total (R$)": calc_parc(st.session_state.get(f"dados_{g}"), mes_n, ano_r)[1]} for g in st.session_state.guias_extras]
+        dados_guias = []
+        for g in st.session_state.guias_extras:
+            _, tot, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{g}"), mes_n, ano_r)
+            dados_guias.append({"Guia": g, "Custo Total (R$)": tot})
         if dados_guias:
             df_guias = pd.DataFrame(dados_guias)
-            # Total Geral movido para o topo
             total_geral = df_guias['Custo Total (R$)'].sum()
             st.metric("💰 Total Geral de Todas as Guias", f"R$ {total_geral:,.2f}")
             st.dataframe(df_guias, use_container_width=True, hide_index=True)
@@ -342,19 +446,33 @@ if check_password():
             st.plotly_chart(fig_guias, use_container_width=True)
         else:
             st.info("Nenhuma guia extra criada.")
+        
+        st.divider()
+        st.subheader("📊 Gastos por Categoria (Geral do Mês)")
+        if gastos_categoria:
+            df_cat = pd.DataFrame(gastos_categoria.items(), columns=["Categoria", "Valor (R$)"]).sort_values("Valor (R$)", ascending=False)
+            st.dataframe(df_cat, use_container_width=True, hide_index=True)
+            fig_cat = px.bar(df_cat, x="Categoria", y="Valor (R$)", color="Categoria", text_auto='.2f')
+            st.plotly_chart(fig_cat, use_container_width=True)
+        else:
+            st.info("Nenhum gasto registrado neste mês.")
 
     else:  # Guias Extras Individuais
-        dr, vt = calc_parc(st.session_state.get(f"dados_{sel}"), mes_n, ano_r)
-        st.subheader(f"Total no Mês: R$ {vt:,.2f}")
-        if not dr.empty:
-            st.dataframe(dr, use_container_width=True, hide_index=True)
+        df_parc, total_parc, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{sel}"), mes_n, ano_r)
+        st.subheader(f"Total no Mês: R$ {total_parc:,.2f}")
+        if not df_parc.empty:
+            st.dataframe(df_parc, use_container_width=True, hide_index=True)
         st.divider()
-        st.write("**Base de Lançamentos:**")
+        st.write("**Base de Lançamentos (parcelas):**")
+        colunas_guias = ["Descrição", "Valor Parcela (R$)", "Mês Início (1-12)", "Ano Início", "Qtd Parcelas", "Categoria"]
         de = st.data_editor(st.session_state[f"dados_{sel}"], num_rows="dynamic", use_container_width=True, hide_index=True,
-                            column_config={"Valor Parcela (R$)": st.column_config.NumberColumn(format="R$ %.2f", min_value=0),
-                                           "Mês Início (1-12)": st.column_config.NumberColumn(min_value=1, max_value=12, step=1),
-                                           "Ano Início": st.column_config.NumberColumn(min_value=2000, max_value=2030, step=1),
-                                           "Qtd Parcelas": st.column_config.NumberColumn(min_value=1, step=1)})
+                            column_config={
+                                "Valor Parcela (R$)": st.column_config.NumberColumn(format="R$ %.2f", min_value=0),
+                                "Mês Início (1-12)": st.column_config.NumberColumn(min_value=1, max_value=12, step=1),
+                                "Ano Início": st.column_config.NumberColumn(min_value=2000, max_value=2030, step=1),
+                                "Qtd Parcelas": st.column_config.NumberColumn(min_value=1, step=1),
+                                "Categoria": st.column_config.SelectboxColumn(options=get_categorias())
+                            })
         if not de.equals(st.session_state[f"dados_{sel}"]):
             st.session_state[f"dados_{sel}"] = de
             salvar_dados_nuvem()
@@ -379,7 +497,10 @@ if check_password():
             m_f = mes_n + i
             a_f = ano_r
             while m_f > 12: m_f -= 12; a_f += 1
-            t_g_f = sum([calc_parc(st.session_state.get(f"dados_{g}"), m_f, a_f)[1] for g in st.session_state.guias_extras])
+            t_g_f = 0.0
+            for g in st.session_state.guias_extras:
+                _, tot, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{g}"), m_f, a_f)
+                t_g_f += tot
             t_d_f = t_fix + media_casuais + t_g_f
             proj.append({"Mês": f"{list(MESES.keys())[m_f-1]}/{a_f}", "Renda": total_renda, "Fixos": t_fix, 
                          "Casuais (média)": media_casuais, "Guias": t_g_f, "Despesa Total": t_d_f, "Sobra": total_renda - t_d_f})

@@ -37,7 +37,7 @@ if check_password():
 
     MESES = {"Janeiro":1,"Fevereiro":2,"Março":3,"Abril":4,"Maio":5,"Junho":6,
              "Julho":7,"Agosto":8,"Setembro":9,"Outubro":10,"Novembro":11,"Dezembro":12}
-    CATEGORIAS_PADRAO = ["Alimentação","Transporte","Lazer","Saúde","Casa","Trabalho","Outros"]
+    CATEGORIAS_PADRAO_BASE = ["Alimentação","Transporte","Lazer","Saúde","Casa","Trabalho","Outros"]
 
     # --- CONEXÃO GOOGLE SHEETS ---
     @st.cache_resource
@@ -74,7 +74,8 @@ if check_password():
             "guias_extras": st.session_state.guias_extras,
             "historico_fixos": st.session_state.historico_fixos,
             "historico_casuais": st.session_state.historico_casuais,
-            "categorias_personalizadas": st.session_state.categorias_personalizadas
+            "categorias_personalizadas": st.session_state.categorias_personalizadas,
+            "categorias_padrao": st.session_state.categorias_padrao  # salvar as padrão renomeadas
         }
         for g in st.session_state.guias_extras:
             if f"dados_{g}" in st.session_state:
@@ -95,6 +96,9 @@ if check_password():
                 df_base = pd.DataFrame(st.session_state.historico_fixos[chave_ant])
                 if not df_base.empty:
                     df_base["Pago"] = False
+                    # Garantir coluna Categoria se não existir
+                    if "Categoria" not in df_base.columns:
+                        df_base["Categoria"] = "Outros"
                     st.session_state.gastos_fixos = df_base
                     st.success(f"Importado de {m_ant}!")
                 else:
@@ -105,7 +109,11 @@ if check_password():
 
         st.session_state.gastos_fixos = pd.DataFrame(st.session_state.historico_fixos.get(chave_atual, []))
         if st.session_state.gastos_fixos.empty:
-            st.session_state.gastos_fixos = pd.DataFrame(columns=["Descrição","Valor (R$)","Pago"])
+            st.session_state.gastos_fixos = pd.DataFrame(columns=["Descrição","Valor (R$)","Pago","Categoria"])
+        else:
+            # Garantir coluna Categoria
+            if "Categoria" not in st.session_state.gastos_fixos.columns:
+                st.session_state.gastos_fixos["Categoria"] = "Outros"
 
         df_c = pd.DataFrame(st.session_state.historico_casuais.get(chave_atual, []))
         if not df_c.empty:
@@ -179,7 +187,8 @@ if check_password():
         for _, row in fixos_df.iterrows():
             status = "Pago" if row.get("Pago", False) else "Pendente"
             desc = row['Descrição'] if 'Descrição' in row else ''
-            pdf.cell(0, 6, remover_acentos(f"{desc}: R$ {row['Valor (R$)']:.2f} ({status})"), ln=True)
+            cat = row['Categoria'] if 'Categoria' in row else ''
+            pdf.cell(0, 6, remover_acentos(f"{desc} ({cat}): R$ {row['Valor (R$)']:.2f} ({status})"), ln=True)
         pdf.ln(5)
         
         pdf.set_font(style='B')
@@ -234,6 +243,12 @@ if check_password():
         st.session_state.historico_casuais = dados_raw.get("historico_casuais", {})
         st.session_state.renda_por_mes = dados_raw.get("renda_por_mes", {})
         st.session_state.categorias_personalizadas = dados_raw.get("categorias_personalizadas", [])
+        # Carregar categorias padrão (podem ter sido renomeadas)
+        st.session_state.categorias_padrao = dados_raw.get("categorias_padrao", CATEGORIAS_PADRAO_BASE.copy())
+
+        # Migração: garantir que categorias_padrao tenha exatamente 7 elementos
+        if len(st.session_state.categorias_padrao) != len(CATEGORIAS_PADRAO_BASE):
+            st.session_state.categorias_padrao = CATEGORIAS_PADRAO_BASE.copy()
 
         for g in st.session_state.guias_extras:
             dados_g = dados_raw.get(f"dados_{g}", [])
@@ -253,7 +268,7 @@ if check_password():
         st.session_state.pdf_data = None
 
     def get_categorias():
-        return CATEGORIAS_PADRAO + st.session_state.categorias_personalizadas
+        return st.session_state.categorias_padrao + st.session_state.categorias_personalizadas
 
     # --- SIDEBAR ---
     with st.sidebar:
@@ -265,6 +280,7 @@ if check_password():
             st.session_state.historico_casuais = novos_dados.get("historico_casuais", {})
             st.session_state.renda_por_mes = novos_dados.get("renda_por_mes", {})
             st.session_state.categorias_personalizadas = novos_dados.get("categorias_personalizadas", [])
+            st.session_state.categorias_padrao = novos_dados.get("categorias_padrao", CATEGORIAS_PADRAO_BASE.copy())
             for g in st.session_state.guias_extras:
                 st.session_state[f"dados_{g}"] = pd.DataFrame(novos_dados.get(f"dados_{g}", []))
             carregar_dados_sessao()
@@ -291,6 +307,11 @@ if check_password():
                 
                 total_guias_p = 0.0
                 gastos_cat_p = {}
+                # Gastos fixos entram no resumo por categoria
+                for _, row in st.session_state.gastos_fixos.iterrows():
+                    cat = row.get("Categoria", "Outros")
+                    gastos_cat_p[cat] = gastos_cat_p.get(cat, 0.0) + row["Valor (R$)"]
+                # Gastos casuais
                 for _, row in st.session_state.gastos_casuais.iterrows():
                     cat = row["Categoria"]
                     gastos_cat_p[cat] = gastos_cat_p.get(cat, 0.0) + row["Valor (R$)"]
@@ -328,12 +349,12 @@ if check_password():
         st.divider()
         ver_projecao = st.checkbox("📈 Ver Projeção Futura (6 meses)")
 
-        # ========== NOVA SEÇÃO: GERENCIAMENTO AVANÇADO DE CATEGORIAS ==========
+        # ========== GERENCIAMENTO DE CATEGORIAS (PADRÃO + PERSONALIZADAS) ==========
         st.divider()
         st.subheader("🏷️ Gerenciar Categorias")
         with st.expander("⚙️ Opções de categorias"):
             # Adicionar nova categoria personalizada
-            nova_cat = st.text_input("Nova categoria:", key="nova_cat_input")
+            nova_cat = st.text_input("Nova categoria personalizada:", key="nova_cat_input")
             if st.button("➕ Adicionar", key="add_cat"):
                 if nova_cat and nova_cat not in get_categorias():
                     st.session_state.categorias_personalizadas.append(nova_cat)
@@ -342,54 +363,76 @@ if check_password():
                 else:
                     st.warning("Categoria já existe ou nome inválido.")
             
-            # Se houver categorias personalizadas, oferece edição
-            if st.session_state.categorias_personalizadas:
-                st.markdown("---")
-                st.write("✏️ **Editar categorias personalizadas**")
-                cat_para_editar = st.selectbox(
-                    "Selecione a categoria:",
-                    st.session_state.categorias_personalizadas,
-                    key="cat_edit_select"
-                )
-                
-                # Renomear
-                novo_nome_cat = st.text_input("Novo nome:", key="novo_nome_cat")
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("✏️ Renomear", key="rename_cat"):
-                        if novo_nome_cat and novo_nome_cat not in get_categorias():
-                            antigo = cat_para_editar
-                            novo = novo_nome_cat
-                            # Atualiza lista
+            st.markdown("---")
+            st.write("✏️ **Editar categorias existentes**")
+            # Listar todas as categorias (padrão + personalizadas) para edição
+            todas_categorias = get_categorias()
+            cat_para_editar = st.selectbox(
+                "Selecione a categoria:",
+                todas_categorias,
+                key="cat_edit_select"
+            )
+            # Verifica se é padrão ou personalizada
+            is_padrao = cat_para_editar in st.session_state.categorias_padrao
+            is_personalizada = cat_para_editar in st.session_state.categorias_personalizadas
+            
+            if is_padrao:
+                st.info("📌 Esta é uma categoria padrão. Você pode renomeá-la, mas não pode apagá-la.")
+            elif is_personalizada:
+                st.info("✨ Categoria personalizada. Você pode renomear ou apagar.")
+            
+            # Renomear (qualquer categoria)
+            novo_nome_cat = st.text_input("Novo nome:", key="novo_nome_cat")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("✏️ Renomear", key="rename_cat"):
+                    if novo_nome_cat and novo_nome_cat not in get_categorias():
+                        antigo = cat_para_editar
+                        novo = novo_nome_cat
+                        # Atualizar lista apropriada
+                        if is_padrao:
+                            idx = st.session_state.categorias_padrao.index(antigo)
+                            st.session_state.categorias_padrao[idx] = novo
+                        else:
                             idx = st.session_state.categorias_personalizadas.index(antigo)
                             st.session_state.categorias_personalizadas[idx] = novo
-                            
-                            # Atualiza despesas casuais do mês atual
-                            if not st.session_state.gastos_casuais.empty:
-                                st.session_state.gastos_casuais.loc[
-                                    st.session_state.gastos_casuais["Categoria"] == antigo, "Categoria"
-                                ] = novo
-                            
-                            # Atualiza guias extras (parcelamentos)
-                            for guia in st.session_state.guias_extras:
-                                df_g = st.session_state[f"dados_{guia}"]
-                                if not df_g.empty and "Categoria" in df_g.columns:
-                                    df_g.loc[df_g["Categoria"] == antigo, "Categoria"] = novo
-                                    st.session_state[f"dados_{guia}"] = df_g
-                            
-                            salvar_dados_nuvem()
-                            st.success(f"Categoria '{antigo}' renomeada para '{novo}'.")
-                            st.rerun()
-                        else:
-                            st.warning("Nome inválido ou já existe.")
-                
-                # Apagar categoria
-                with col2:
+                        
+                        # Atualizar gastos fixos do mês atual
+                        if not st.session_state.gastos_fixos.empty:
+                            st.session_state.gastos_fixos.loc[
+                                st.session_state.gastos_fixos["Categoria"] == antigo, "Categoria"
+                            ] = novo
+                        
+                        # Atualizar gastos casuais do mês atual
+                        if not st.session_state.gastos_casuais.empty:
+                            st.session_state.gastos_casuais.loc[
+                                st.session_state.gastos_casuais["Categoria"] == antigo, "Categoria"
+                            ] = novo
+                        
+                        # Atualizar guias extras (parcelamentos)
+                        for guia in st.session_state.guias_extras:
+                            df_g = st.session_state[f"dados_{guia}"]
+                            if not df_g.empty and "Categoria" in df_g.columns:
+                                df_g.loc[df_g["Categoria"] == antigo, "Categoria"] = novo
+                                st.session_state[f"dados_{guia}"] = df_g
+                        
+                        salvar_dados_nuvem()
+                        st.success(f"Categoria '{antigo}' renomeada para '{novo}'.")
+                        st.rerun()
+                    else:
+                        st.warning("Nome inválido ou já existe.")
+            
+            # Apagar apenas categorias personalizadas
+            with col2:
+                if is_personalizada:
                     if st.button("🗑️ Apagar", key="delete_cat"):
                         if cat_para_editar:
-                            # Remove da lista
                             st.session_state.categorias_personalizadas.remove(cat_para_editar)
-                            # Substitui por "Outros" nos registros
+                            # Substituir por "Outros" nos registros
+                            if not st.session_state.gastos_fixos.empty:
+                                st.session_state.gastos_fixos.loc[
+                                    st.session_state.gastos_fixos["Categoria"] == cat_para_editar, "Categoria"
+                                ] = "Outros"
                             if not st.session_state.gastos_casuais.empty:
                                 st.session_state.gastos_casuais.loc[
                                     st.session_state.gastos_casuais["Categoria"] == cat_para_editar, "Categoria"
@@ -402,8 +445,9 @@ if check_password():
                             salvar_dados_nuvem()
                             st.success(f"Categoria '{cat_para_editar}' removida. Gastos movidos para 'Outros'.")
                             st.rerun()
-            else:
-                st.info("Nenhuma categoria personalizada. Adicione uma acima.")
+                else:
+                    st.button("🗑️ Apagar", disabled=True, help="Categorias padrão não podem ser apagadas")
+
         # ========== FIM DA SEÇÃO DE CATEGORIAS ==========
 
         st.divider()
@@ -464,9 +508,15 @@ if check_password():
     
     total_guias = 0.0
     gastos_categoria = {}
+    # Gastos fixos
+    for _, row in st.session_state.gastos_fixos.iterrows():
+        cat = row.get("Categoria", "Outros")
+        gastos_categoria[cat] = gastos_categoria.get(cat, 0.0) + row["Valor (R$)"]
+    # Gastos casuais
     for _, row in st.session_state.gastos_casuais.iterrows():
         cat = row["Categoria"]
         gastos_categoria[cat] = gastos_categoria.get(cat, 0.0) + row["Valor (R$)"]
+    # Guias extras
     for guia in st.session_state.guias_extras:
         _, tot_guia, cats_guia = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
         total_guias += tot_guia
@@ -507,9 +557,18 @@ if check_password():
             carregar_dados_sessao(True)
             salvar_dados_nuvem()
             st.rerun()
-        ef = st.data_editor(st.session_state.gastos_fixos, num_rows="dynamic", use_container_width=True, hide_index=True,
-                            column_config={"Valor (R$)": st.column_config.NumberColumn(format="R$ %.2f", min_value=0),
-                                           "Pago": st.column_config.CheckboxColumn()})
+        # Adicionar coluna de Categoria no editor
+        ef = st.data_editor(
+            st.session_state.gastos_fixos,
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Valor (R$)": st.column_config.NumberColumn(format="R$ %.2f", min_value=0),
+                "Pago": st.column_config.CheckboxColumn(),
+                "Categoria": st.column_config.SelectboxColumn(options=get_categorias())
+            }
+        )
         if not ef.equals(st.session_state.gastos_fixos):
             st.session_state.gastos_fixos = ef
             salvar_dados_nuvem()

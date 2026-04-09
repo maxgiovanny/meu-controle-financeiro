@@ -108,11 +108,9 @@ if "dados_carregados" not in st.session_state:
 # --- CÁLCULOS ---
 def calc_parc(df, m, a):
     at, tot = [], 0.0
-    erros = 0
     if df is None or df.empty:
         return pd.DataFrame(columns=["Descrição", "Parcela", "Valor (R$)"]), 0.0
     
-    # Filtra linhas onde os campos essenciais estão vazios antes de processar
     df_valid = df.dropna(subset=["Descrição", "Valor Parcela (R$)"])
     df_valid = df_valid[df_valid["Descrição"] != ""]
 
@@ -123,10 +121,7 @@ def calc_parc(df, m, a):
             if ini <= alvo <= (ini + qtd - 1):
                 at.append({"Descrição": r["Descrição"], "Parcela": f"{alvo - ini + 1}/{qtd}", "Valor (R$)": v})
                 tot += v
-        except:
-            erros += 1
-            continue
-    if erros: st.warning(f"{erros} parcela(s) com dados incompletos ignorada(s).")
+        except: continue
     return pd.DataFrame(at), tot
 
 # --- SIDEBAR ---
@@ -175,11 +170,8 @@ with st.sidebar:
 # --- MAIN ---
 mes_n, ano_r = MESES[st.session_state.mes_atual], st.session_state.ano_atual
 
-if not st.session_state.gastos_fixos.empty:
-    fixos_nao_pagos = st.session_state.gastos_fixos[st.session_state.gastos_fixos["Pago"] == False]
-    t_fix = fixos_nao_pagos["Valor (R$)"].sum() if not fixos_nao_pagos.empty else 0.0
-else: t_fix = 0.0
-
+# AGORA O TOTAL FIXO SOMA TUDO, INDEPENDENTE DO "PAGO"
+t_fix = float(st.session_state.gastos_fixos["Valor (R$)"].sum()) if not st.session_state.gastos_fixos.empty else 0.0
 t_cas = float(st.session_state.gastos_casuais["Valor (R$)"].sum()) if not st.session_state.gastos_casuais.empty else 0.0
 t_gui = sum([calc_parc(st.session_state.get(f"dados_{g}"), mes_n, ano_r)[1] for g in st.session_state.guias_extras])
 
@@ -190,10 +182,10 @@ st.divider()
 if sel == "Resumo Geral":
     gt = t_fix + t_cas + t_gui
     sobra = st.session_state.renda - gt
-    fig = px.pie(pd.DataFrame({"C": ["Fixos (pendentes)", "Dia a Dia", "Guias", "Sobra"], "V": [t_fix, t_cas, t_gui, max(0, sobra)]}), values='V', names='C', hole=.4)
+    # Gráfico agora mostra Gastos Fixos como um todo
+    fig = px.pie(pd.DataFrame({"C": ["Gastos Fixos", "Dia a Dia", "Guias Extras", "Sobra"], "V": [t_fix, t_cas, t_gui, max(0, sobra)]}), values='V', names='C', hole=.4)
     fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300); st.plotly_chart(fig, use_container_width=True)
     c1, c2 = st.columns(2); c1.metric("Gasto Total", f"R$ {gt:,.2f}")
-    # Sobra com Delta %
     sobra_perc = (sobra / st.session_state.renda) * 100 if st.session_state.renda > 0 else 0
     st.metric("Sobra Real", f"R$ {sobra:,.2f}", delta=f"{sobra_perc:.1f}% da renda", delta_color="normal" if sobra >= 0 else "inverse")
 
@@ -202,8 +194,8 @@ elif sel == "Gastos Fixos":
     if cb.button("🔄 Importar"): 
         carregar_dados_sessao(importar_do_anterior=True); salvar_dados_nuvem(); st.rerun()
 
-    total_geral = st.session_state.gastos_fixos["Valor (R$)"].sum() if not st.session_state.gastos_fixos.empty else 0.0
-    st.metric("Total Pendente", f"R$ {t_fix:,.2f}", delta=f"Total Geral: R$ {total_geral:,.2f}", delta_color="off")
+    # Métrica simplificada para mostrar apenas o total da aba
+    st.metric("Total de Gastos Fixos", f"R$ {t_fix:,.2f}")
 
     df_f = st.session_state.gastos_fixos if not st.session_state.gastos_fixos.empty else pd.DataFrame(columns=["Descrição", "Valor (R$)", "Pago"])
     ef = st.data_editor(df_f, num_rows="dynamic", use_container_width=True, hide_index=True, column_config={"Valor (R$)": st.column_config.NumberColumn(format="R$ %.2f"), "Pago": st.column_config.CheckboxColumn()})
@@ -211,7 +203,7 @@ elif sel == "Gastos Fixos":
 
 elif sel == "Dia a Dia":
     st.subheader("🛍️ Compras Diárias")
-    st.metric("Total do Mês", f"R$ {t_cas:,.2f}")
+    st.metric("Total de Gastos Casuais", f"R$ {t_cas:,.2f}")
     df_c = st.session_state.gastos_casuais if not st.session_state.gastos_casuais.empty else pd.DataFrame(columns=["Data", "Categoria", "Descrição", "Valor (R$)"])
     ec = st.data_editor(df_c, num_rows="dynamic", use_container_width=True, hide_index=True, column_config={"Data": st.column_config.DateColumn(format="DD/MM/YYYY"), "Categoria": st.column_config.SelectboxColumn(options=CATEGORIAS), "Valor (R$)": st.column_config.NumberColumn(format="R$ %.2f")})
     if not ec.equals(st.session_state.gastos_casuais): st.session_state.gastos_casuais = ec; salvar_dados_nuvem()

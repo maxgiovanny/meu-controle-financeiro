@@ -73,21 +73,22 @@ def salvar_dados_nuvem():
 def carregar_dados_sessao():
     mes_ano_chave = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
     
-    # 1. Gastos Fixos (Repete do último mês salvo, mas desmarca o "Pago")
+    # 1. Gastos Fixos (CORRIGIDO: Repete do último disponível)
     if mes_ano_chave in st.session_state.historico_fixos:
         st.session_state.gastos_fixos = pd.DataFrame(st.session_state.historico_fixos[mes_ano_chave])
     else:
         if st.session_state.historico_fixos:
-            # Pega a chave do último mês que tem dados
-            ult_chave = list(st.session_state.historico_fixos.keys())[-1]
+            # Pega as chaves e ordena para achar a mais recente
+            chaves_ordenadas = list(st.session_state.historico_fixos.keys())
+            ult_chave = chaves_ordenadas[-1] 
             df_base = pd.DataFrame(st.session_state.historico_fixos[ult_chave])
             if not df_base.empty:
-                df_base["Pago"] = False # Desmarca para o mês novo
+                df_base["Pago"] = False # Resetar pagamentos para o mês novo
             st.session_state.gastos_fixos = df_base
         else:
             st.session_state.gastos_fixos = pd.DataFrame(columns=["Descrição", "Valor (R$)", "Pago"])
 
-    # 2. Gastos Casuais (Mês novo começa limpo)
+    # 2. Gastos Casuais
     if mes_ano_chave in st.session_state.historico_casuais:
         df_c = pd.DataFrame(st.session_state.historico_casuais[mes_ano_chave])
         if not df_c.empty:
@@ -101,8 +102,8 @@ def carregar_dados_sessao():
 if "dados_carregados" not in st.session_state:
     val = worksheet.acell('A1').value
     d = json.loads(val) if val else {}
-    st.session_state.ano_atual = datetime.now().year
-    st.session_state.mes_atual = list(MESES.keys())[datetime.now().month - 1]
+    st.session_state.ano_atual = 2026
+    st.session_state.mes_atual = "Abril"
     st.session_state.renda = d.get("renda", 10000.0)
     st.session_state.guias_extras = d.get("guias_extras", [])
     st.session_state.historico_fixos = d.get("historico_fixos", {})
@@ -113,7 +114,7 @@ if "dados_carregados" not in st.session_state:
     carregar_dados_sessao()
     st.session_state.dados_carregados = True
 
-# --- LOGICA DE CÁLCULO ---
+# --- LÓGICA PARCELAS ---
 def calcular_parcelas_v2(df, mes, ano):
     ativas, total = [], 0.0
     if df is None or df.empty: return pd.DataFrame(columns=["Descrição", "Parcela", "Valor (R$)"]), 0.0
@@ -162,8 +163,7 @@ with st.sidebar:
     st.divider()
     st.subheader("🛠️ Gerenciar Guias")
     
-    # Adicionar
-    n_g = st.text_input("Nome da Nova Guia:")
+    n_g = st.text_input("Nova Guia:")
     if st.button("➕ Criar Guia"):
         if n_g and n_g not in st.session_state.guias_extras:
             criar_ponto_restauracao()
@@ -172,13 +172,11 @@ with st.sidebar:
             salvar_dados_nuvem()
             st.rerun()
     
-    # Renomear e Apagar (Só aparecem se houver guias)
     if st.session_state.guias_extras:
         g_focada = st.selectbox("Selecione uma Guia:", st.session_state.guias_extras)
         
-        # Renomear
         novo_nome = st.text_input("Novo nome para esta guia:")
-        if st.button("📝 Renomear Guia"):
+        if st.button("📝 Renomear"):
             if novo_nome and novo_nome not in st.session_state.guias_extras:
                 criar_ponto_restauracao()
                 idx = st.session_state.guias_extras.index(g_focada)
@@ -188,8 +186,7 @@ with st.sidebar:
                 salvar_dados_nuvem()
                 st.rerun()
         
-        # Apagar
-        if st.button("🗑️ Apagar Guia Permanentemente"):
+        if st.button("🗑️ Apagar Permanentemente"):
             criar_ponto_restauracao()
             st.session_state.guias_extras.remove(g_focada)
             if f"dados_{g_focada}" in st.session_state: del st.session_state[f"dados_{g_focada}"]
@@ -216,7 +213,6 @@ if sel == "Resumo Geral":
     c1, c2 = st.columns(2)
     c1.metric("Gasto Total", f"R$ {g_total:,.2f}")
     c2.metric("Sobra", f"R$ {sobra:,.2f}")
-    st.progress(min(int((g_total/st.session_state.renda)*100), 100) if st.session_state.renda > 0 else 0)
 
 elif sel == "Gastos Fixos":
     if st.session_state.gastos_fixos.empty:
@@ -242,7 +238,6 @@ elif sel == "Dia a Dia":
         salvar_dados_nuvem()
     if not st.session_state.gastos_casuais.empty:
         st.divider()
-        st.write("**Total por Categoria:**")
         st.dataframe(st.session_state.gastos_casuais.groupby("Categoria")["Valor (R$)"].sum().reset_index(), use_container_width=True, hide_index=True)
 
 else:

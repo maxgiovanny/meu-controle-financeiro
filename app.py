@@ -219,7 +219,7 @@ if check_password():
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             temp_path = tmp.name
         
-        pdf.output(temp_path, 'F')
+        pdf.output(temp_path)
         
         with open(temp_path, "rb") as f:
             pdf_data = f.read()

@@ -220,6 +220,31 @@ if check_password():
                     salvar_dados_nuvem()
                     st.rerun()
 
+                # --- NOVA FUNÇÃO: REORGANIZAR ORDEM DAS GUIAS ---
+                st.markdown("---")
+                st.write("🔼 **Reordenar Guias**")
+                guia_mover = st.selectbox("Selecione a guia para mover:", st.session_state.guias_extras, key="mover_guia")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("⬆️ Mover para Cima"):
+                        idx = st.session_state.guias_extras.index(guia_mover)
+                        if idx > 0:
+                            # Troca de posição com o elemento anterior
+                            st.session_state.guias_extras[idx], st.session_state.guias_extras[idx-1] = st.session_state.guias_extras[idx-1], st.session_state.guias_extras[idx]
+                            salvar_dados_nuvem()
+                            st.rerun()
+                        else:
+                            st.warning("Já está no topo.")
+                with col2:
+                    if st.button("⬇️ Mover para Baixo"):
+                        idx = st.session_state.guias_extras.index(guia_mover)
+                        if idx < len(st.session_state.guias_extras) - 1:
+                            st.session_state.guias_extras[idx], st.session_state.guias_extras[idx+1] = st.session_state.guias_extras[idx+1], st.session_state.guias_extras[idx]
+                            salvar_dados_nuvem()
+                            st.rerun()
+                        else:
+                            st.warning("Já está no final.")
+
     # --- DEFINIÇÃO DE TOTAIS ---
     mes_n, ano_r = MESES[st.session_state.mes_atual], st.session_state.ano_atual
     t_fix = float(st.session_state.gastos_fixos["Valor (R$)"].sum()) if not st.session_state.gastos_fixos.empty else 0.0

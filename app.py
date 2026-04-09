@@ -161,10 +161,7 @@ if check_password():
     def remover_acentos(texto):
         if not isinstance(texto, str):
             texto = str(texto)
-        # Normalizar e remover acentos
         texto = unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')
-        # Substituir alguns caracteres problemáticos
-        texto = texto.replace('€', 'EUR').replace('$', 'USD').replace('R$', 'R$')
         return texto
 
     # --- FUNÇÃO PARA GERAR PDF (SEM UNICODE, COM SUBSTITUIÇÃO) ---
@@ -193,7 +190,8 @@ if check_password():
         pdf.set_font(style='')
         for _, row in fixos_df.iterrows():
             status = "Pago" if row.get("Pago", False) else "Pendente"
-            pdf.cell(0, 6, remover_acentos(f"{row['Descricao']}: R$ {row['Valor (R$)']:.2f} ({status})"), ln=True)
+            # Corrigido: acessar a coluna 'Descrição' (com acento) e aplicar remover_acentos
+            pdf.cell(0, 6, remover_acentos(f"{row['Descrição']}: R$ {row['Valor (R$)']:.2f} ({status})"), ln=True)
         pdf.ln(5)
         
         # Despesas Casuais
@@ -202,7 +200,7 @@ if check_password():
         pdf.set_font(style='')
         for _, row in casuais_df.iterrows():
             data_str = row['Data'].strftime("%d/%m/%Y") if hasattr(row['Data'], 'strftime') else str(row['Data'])
-            pdf.cell(0, 6, remover_acentos(f"{data_str} - {row['Categoria']} - {row['Descricao']}: R$ {row['Valor (R$)']:.2f}"), ln=True)
+            pdf.cell(0, 6, remover_acentos(f"{data_str} - {row['Categoria']} - {row['Descrição']}: R$ {row['Valor (R$)']:.2f}"), ln=True)
         pdf.ln(5)
         
         # Guias Extras
@@ -212,7 +210,7 @@ if check_password():
         for guia in guias_extras:
             df_g, _, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), MESES[mes_nome], ano)
             for _, row in df_g.iterrows():
-                pdf.cell(0, 6, remover_acentos(f"{guia} - {row['Descricao']} ({row['Categoria']}): R$ {row['Valor (R$)']:.2f}"), ln=True)
+                pdf.cell(0, 6, remover_acentos(f"{guia} - {row['Descrição']} ({row['Categoria']}): R$ {row['Valor (R$)']:.2f}"), ln=True)
         pdf.ln(5)
         
         # Resumo por Categoria

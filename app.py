@@ -168,9 +168,12 @@ if sel == "Resumo Geral":
     c1, c2 = st.columns(2); c1.metric("Gasto Total", f"R$ {gt:,.2f}"); c2.metric("Sobra", f"R$ {sobra:,.2f}")
 
 elif sel == "Gastos Fixos":
-    ct, cb = st.columns([3, 1]); ct.subheader("📌 Contas")
+    ct, cb = st.columns([3, 1]); ct.subheader("📌 Contas Fixas")
     if cb.button("🔄 Importar"): 
         carregar_dados_sessao(importar_do_anterior=True); salvar_dados_nuvem(); st.rerun()
+    
+    # Exibição do Total da Aba
+    st.metric("Total da Aba", f"R$ {t_fix:,.2f}")
     
     df_f = st.session_state.gastos_fixos if not st.session_state.gastos_fixos.empty else pd.DataFrame(columns=["Descrição", "Valor (R$)", "Pago"])
     ef = st.data_editor(df_f, num_rows="dynamic", use_container_width=True, hide_index=True)
@@ -180,6 +183,10 @@ elif sel == "Gastos Fixos":
 
 elif sel == "Dia a Dia":
     st.subheader("🛍️ Compras Diárias")
+    
+    # Exibição do Total da Aba
+    st.metric("Total da Aba", f"R$ {t_cas:,.2f}")
+    
     df_c = st.session_state.gastos_casuais if not st.session_state.gastos_casuais.empty else pd.DataFrame(columns=["Data", "Categoria", "Descrição", "Valor (R$)"])
     ec = st.data_editor(df_c, num_rows="dynamic", use_container_width=True, hide_index=True,
         column_config={"Data": st.column_config.DateColumn(format="DD/MM/YYYY"), "Categoria": st.column_config.SelectboxColumn(options=CATEGORIAS)})

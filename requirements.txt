@@ -2,4 +2,4 @@ pandas
 gspread
 google-auth
 plotly
-fpdf
+fpdf2

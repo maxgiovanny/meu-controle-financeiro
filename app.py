@@ -76,7 +76,8 @@ if check_password():
             "historico_fixos": st.session_state.historico_fixos,
             "historico_casuais": st.session_state.historico_casuais,
             "categorias_personalizadas": st.session_state.categorias_personalizadas,
-            "categorias_padrao": st.session_state.categorias_padrao  # salvar as padrão renomeadas
+            "categorias_padrao": st.session_state.categorias_padrao,
+            "metas_orcamento": st.session_state.metas_orcamento # GUARDA AS METAS
         }
         for g in st.session_state.guias_extras:
             if f"dados_{g}" in st.session_state:
@@ -97,9 +98,7 @@ if check_password():
                 df_base = pd.DataFrame(st.session_state.historico_fixos[chave_ant])
                 if not df_base.empty:
                     df_base["Pago"] = False
-                    # Garantir coluna Categoria se não existir
-                    if "Categoria" not in df_base.columns:
-                        df_base["Categoria"] = "Outros"
+                    if "Categoria" not in df_base.columns: df_base["Categoria"] = "Outros"
                     st.session_state.gastos_fixos = df_base
                     st.success(f"Importado de {m_ant}!")
                 else:
@@ -112,7 +111,6 @@ if check_password():
         if st.session_state.gastos_fixos.empty:
             st.session_state.gastos_fixos = pd.DataFrame(columns=["Descrição","Valor (R$)","Pago","Categoria"])
         else:
-            # Garantir coluna Categoria
             if "Categoria" not in st.session_state.gastos_fixos.columns:
                 st.session_state.gastos_fixos["Categoria"] = "Outros"
 
@@ -153,8 +151,7 @@ if check_password():
                 if ini <= alvo <= (ini+qtd-1):
                     categoria = r.get("Categoria","Outros")
                     parcelas.append({"Descrição":r["Descrição"],"Categoria":categoria,"Valor (R$)":v})
-            except:
-                continue
+            except: continue
         df_parc = pd.DataFrame(parcelas)
         total = df_parc["Valor (R$)"].sum() if not df_parc.empty else 0.0
         soma_cat = df_parc.groupby("Categoria")["Valor (R$)"].sum().to_dict() if not df_parc.empty else {}
@@ -162,24 +159,19 @@ if check_password():
 
     # --- FUNÇÕES DE PDF E FORMATAÇÃO ---
     def remover_acentos(texto):
-        if not isinstance(texto, str):
-            texto = str(texto)
+        if not isinstance(texto, str): texto = str(texto)
         return unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')
 
     def formatar_moeda(valor):
         return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-    # --- NOVO GERADOR DE PDF PROFISSIONAL ---
     def gerar_pdf_mes(mes_nome, ano, renda_df, fixos_df, casuais_df, guias_dados, total_renda, t_fix, t_cas, t_gui, sobra, dados_categoria):
         pdf = FPDF()
         pdf.add_page()
-        
-        # Paleta de Cores
         COR_TOPO = (46, 125, 50)
         COR_TITULO_SECAO = (225, 225, 225)
         COR_LINHA_DIVISORIA = (220, 220, 220)
         
-        # Cabeçalho Principal
         pdf.set_font('helvetica', 'B', 16)
         pdf.set_fill_color(*COR_TOPO)
         pdf.set_text_color(255, 255, 255)
@@ -187,50 +179,36 @@ if check_password():
         pdf.ln(4)
         pdf.set_text_color(0, 0, 0)
         
-        # --- FUNÇÃO AUXILIAR PARA CRIAR AS TABELAS ---
         def imprimir_secao(titulo, total, df, tipo="padrao"):
-            # Barra do Título da Seção
             pdf.set_font('helvetica', 'B', 11)
             pdf.set_fill_color(*COR_TITULO_SECAO)
             pdf.set_draw_color(120, 120, 120) 
             pdf.cell(140, 8, remover_acentos(f"  {titulo}"), border='TB', fill=True)
             pdf.cell(50, 8, formatar_moeda(total), border='TB', ln=True, align="R", fill=True)
-            
-            # Resetar cor da linha para as divisórias finas
             pdf.set_draw_color(*COR_LINHA_DIVISORIA)
             pdf.set_font('helvetica', '', 9)
-            
             if df is None or df.empty:
                 pdf.cell(190, 6, "  Nenhum registro.", border='B', ln=True)
                 pdf.ln(3)
                 return
-                
             for _, row in df.iterrows():
-                if tipo == "renda":
-                    texto_esq = f"  {row['Fonte']}"
+                if tipo == "renda": texto_esq = f"  {row['Fonte']}"
                 elif tipo == "fixos":
                     status = "(Pago)" if row.get("Pago", False) else "(Pendente)"
-                    cat = str(row.get('Categoria', ''))
-                    desc = str(row.get('Descrição', ''))
-                    texto_esq = f"  {desc} [{cat}] {status}"
+                    texto_esq = f"  {row.get('Descrição', '')} [{row.get('Categoria', '')}] {status}"
                 elif tipo == "casuais":
-                    data_str = row['Data'].strftime("%d/%m") if hasattr(row['Data'],'strftime') else str(row['Data'])[:5]
-                    texto_esq = f"  {data_str} | {row.get('Categoria', '')} - {row.get('Descrição', '')}"
+                    d_str = row['Data'].strftime("%d/%m") if hasattr(row['Data'],'strftime') else str(row['Data'])[:5]
+                    texto_esq = f"  {d_str} | {row.get('Categoria', '')} - {row.get('Descrição', '')}"
 
-                # Limita o texto para não encavalar no valor numérico
                 if len(texto_esq) > 85: texto_esq = texto_esq[:82] + "..."
-                
-                # Imprime a linha com borda inferior ('B')
                 pdf.cell(140, 6, remover_acentos(texto_esq), border='B')
                 pdf.cell(50, 6, formatar_moeda(row['Valor (R$)']), border='B', ln=True, align="R")
             pdf.ln(4)
 
-        # Imprime as seções usando a função acima
         imprimir_secao("Renda Mensal", total_renda, renda_df, "renda")
         imprimir_secao("Despesas Fixas", t_fix, fixos_df, "fixos")
         imprimir_secao("Despesas do Dia a Dia", t_cas, casuais_df, "casuais")
         
-        # --- GUIAS / PARCELAMENTOS ---
         pdf.set_font('helvetica', 'B', 11)
         pdf.set_fill_color(*COR_TITULO_SECAO)
         pdf.set_draw_color(120, 120, 120)
@@ -244,13 +222,9 @@ if check_password():
         else:
             for guia, parcelas in guias_dados.items():
                 if not parcelas: continue
-                
-                # Sub-barra de identificação do cartão/guia
                 pdf.set_font('helvetica', 'B', 9)
-                pdf.set_fill_color(245, 245, 245) # Cinza bem claro
+                pdf.set_fill_color(245, 245, 245)
                 pdf.cell(190, 6, remover_acentos(f"    Fatura: {guia}"), border='B', ln=True, fill=True)
-                
-                # Itens da guia
                 pdf.set_font('helvetica', '', 9)
                 for row in parcelas:
                     linha_texto = f"        - {row['Descrição']} ({row['Categoria']})"
@@ -259,13 +233,11 @@ if check_password():
                     pdf.cell(50, 6, formatar_moeda(row['Valor (R$)']), border='B', ln=True, align="R")
         pdf.ln(4)
         
-        # --- RESUMO POR CATEGORIA ---
         pdf.set_font('helvetica', 'B', 11)
         pdf.set_fill_color(*COR_TITULO_SECAO)
         pdf.set_draw_color(120, 120, 120)
         pdf.cell(140, 8, remover_acentos("  Resumo de Gastos por Categoria"), border='TB', fill=True)
         pdf.cell(50, 8, "", border='TB', ln=True, align="R", fill=True)
-        
         pdf.set_font('helvetica', '', 9)
         pdf.set_draw_color(*COR_LINHA_DIVISORIA)
         for cat, valor in sorted(dados_categoria.items(), key=lambda x: x[1], reverse=True):
@@ -273,30 +245,18 @@ if check_password():
             pdf.cell(50, 6, formatar_moeda(valor), border='B', ln=True, align="R")
         pdf.ln(6)
         
-        # --- SALDO FINAL ---
         pdf.set_font('helvetica', 'B', 12)
         if sobra >= 0:
-            pdf.set_fill_color(220, 255, 220) # Fundo Verde claro
-            pdf.set_text_color(0, 100, 0) # Texto verde escuro
-            pdf.set_draw_color(0, 150, 0)
+            pdf.set_fill_color(220, 255, 220); pdf.set_text_color(0, 100, 0); pdf.set_draw_color(0, 150, 0)
         else:
-            pdf.set_fill_color(255, 220, 220) # Fundo Vermelho claro
-            pdf.set_text_color(150, 0, 0) # Texto vermelho escuro
-            pdf.set_draw_color(200, 0, 0)
-            
+            pdf.set_fill_color(255, 220, 220); pdf.set_text_color(150, 0, 0); pdf.set_draw_color(200, 0, 0)
         pdf.cell(140, 10, remover_acentos("  SALDO LÍQUIDO DO MÊS:"), border=1, fill=True)
         pdf.cell(50, 10, formatar_moeda(sobra), border=1, ln=True, align="R", fill=True)
-        pdf.set_text_color(0,0,0) # Retorna pro preto normal
+        pdf.set_text_color(0,0,0)
         
-        # --- SALVAR E RETORNAR BYTES ---
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            temp_path = tmp.name
-        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp: temp_path = tmp.name
         pdf.output(temp_path)
-        
-        with open(temp_path, "rb") as f:
-            pdf_data = f.read()
-            
+        with open(temp_path, "rb") as f: pdf_data = f.read()
         os.remove(temp_path)
         return pdf_data
 
@@ -312,10 +272,9 @@ if check_password():
         st.session_state.historico_casuais = dados_raw.get("historico_casuais", {})
         st.session_state.renda_por_mes = dados_raw.get("renda_por_mes", {})
         st.session_state.categorias_personalizadas = dados_raw.get("categorias_personalizadas", [])
-        # Carregar categorias padrão (podem ter sido renomeadas)
         st.session_state.categorias_padrao = dados_raw.get("categorias_padrao", CATEGORIAS_PADRAO_BASE.copy())
+        st.session_state.metas_orcamento = dados_raw.get("metas_orcamento", {})
 
-        # Migração: garantir que categorias_padrao tenha exatamente 7 elementos
         if len(st.session_state.categorias_padrao) != len(CATEGORIAS_PADRAO_BASE):
             st.session_state.categorias_padrao = CATEGORIAS_PADRAO_BASE.copy()
 
@@ -323,18 +282,15 @@ if check_password():
             dados_g = dados_raw.get(f"dados_{g}", [])
             if dados_g and isinstance(dados_g, list) and len(dados_g)>0:
                 if "Categoria" not in dados_g[0]:
-                    for item in dados_g:
-                        item["Categoria"] = "Outros"
+                    for item in dados_g: item["Categoria"] = "Outros"
             st.session_state[f"dados_{g}"] = pd.DataFrame(dados_g)
             if st.session_state[f"dados_{g}"].empty:
                 st.session_state[f"dados_{g}"] = pd.DataFrame(columns=["Descrição","Valor Parcela (R$)","Mês Início (1-12)","Ano Início","Qtd Parcelas","Categoria"])
         carregar_dados_sessao()
         st.session_state.dados_carregados = True
 
-    if "pdf_ready" not in st.session_state:
-        st.session_state.pdf_ready = False
-    if "pdf_data" not in st.session_state:
-        st.session_state.pdf_data = None
+    if "pdf_ready" not in st.session_state: st.session_state.pdf_ready = False
+    if "pdf_data" not in st.session_state: st.session_state.pdf_data = None
 
     def get_categorias():
         return st.session_state.categorias_padrao + st.session_state.categorias_personalizadas
@@ -350,6 +306,7 @@ if check_password():
             st.session_state.renda_por_mes = novos_dados.get("renda_por_mes", {})
             st.session_state.categorias_personalizadas = novos_dados.get("categorias_personalizadas", [])
             st.session_state.categorias_padrao = novos_dados.get("categorias_padrao", CATEGORIAS_PADRAO_BASE.copy())
+            st.session_state.metas_orcamento = novos_dados.get("metas_orcamento", {})
             for g in st.session_state.guias_extras:
                 st.session_state[f"dados_{g}"] = pd.DataFrame(novos_dados.get(f"dados_{g}", []))
             carregar_dados_sessao()
@@ -365,34 +322,26 @@ if check_password():
             st.rerun()
 
         st.divider()
-        
-        # --- GERAÇÃO DO PDF ---
         if st.button("📄 1. Preparar Relatório PDF"):
             with st.spinner("Construindo o arquivo..."):
                 mes_n = MESES[st.session_state.mes_atual]
                 ano_r = st.session_state.ano_atual
                 t_fix_p = st.session_state.gastos_fixos["Valor (R$)"].sum() if not st.session_state.gastos_fixos.empty else 0.0
                 t_cas_p = st.session_state.gastos_casuais["Valor (R$)"].sum() if not st.session_state.gastos_casuais.empty else 0.0
-                
                 total_guias_p = 0.0
                 gastos_cat_p = {}
-                # Gastos fixos entram no resumo por categoria
                 for _, row in st.session_state.gastos_fixos.iterrows():
                     cat = row.get("Categoria", "Outros")
                     gastos_cat_p[cat] = gastos_cat_p.get(cat, 0.0) + row["Valor (R$)"]
-                # Gastos casuais
                 for _, row in st.session_state.gastos_casuais.iterrows():
                     cat = row["Categoria"]
                     gastos_cat_p[cat] = gastos_cat_p.get(cat, 0.0) + row["Valor (R$)"]
-                
                 guias_dados_p = {}
                 for guia in st.session_state.guias_extras:
                     df_parc, tot, cats = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
                     total_guias_p += tot
-                    for cat, val in cats.items():
-                        gastos_cat_p[cat] = gastos_cat_p.get(cat, 0.0) + val
+                    for cat, val in cats.items(): gastos_cat_p[cat] = gastos_cat_p.get(cat, 0.0) + val
                     guias_dados_p[guia] = df_parc.to_dict('records')
-                
                 total_renda_p = st.session_state.renda_detalhada["Valor (R$)"].sum()
                 sobra_p = total_renda_p - (t_fix_p + t_cas_p + total_guias_p)
 
@@ -405,7 +354,6 @@ if check_password():
                 st.session_state.pdf_ready = True
                 st.success("✅ Arquivo pronto! Clique abaixo para salvar.")
 
-        # --- DOWNLOAD DO PDF ---
         if st.session_state.pdf_ready and st.session_state.pdf_data is not None:
             st.download_button(
                 label="📥 2. Baixar PDF Agora",
@@ -415,110 +363,64 @@ if check_password():
                 use_container_width=True
             )
 
-        st.divider()
-        ver_projecao = st.checkbox("📈 Ver Projeção Futura (6 meses)")
-
-        # ========== GERENCIAMENTO DE CATEGORIAS (PADRÃO + PERSONALIZADAS) ==========
+        # SEÇÃO DE CATEGORIAS
         st.divider()
         st.subheader("🏷️ Gerenciar Categorias")
         with st.expander("⚙️ Opções de categorias"):
-            # Adicionar nova categoria personalizada
             nova_cat = st.text_input("Nova categoria personalizada:", key="nova_cat_input")
             if st.button("➕ Adicionar", key="add_cat"):
                 if nova_cat and nova_cat not in get_categorias():
                     st.session_state.categorias_personalizadas.append(nova_cat)
                     salvar_dados_nuvem()
                     st.rerun()
-                else:
-                    st.warning("Categoria já existe ou nome inválido.")
+                else: st.warning("Categoria já existe ou nome inválido.")
             
             st.markdown("---")
             st.write("✏️ **Editar categorias existentes**")
-            # Listar todas as categorias (padrão + personalizadas) para edição
-            todas_categorias = get_categorias()
-            cat_para_editar = st.selectbox(
-                "Selecione a categoria:",
-                todas_categorias,
-                key="cat_edit_select"
-            )
-            # Verifica se é padrão ou personalizada
+            cat_para_editar = st.selectbox("Selecione a categoria:", get_categorias(), key="cat_edit_select")
             is_padrao = cat_para_editar in st.session_state.categorias_padrao
             is_personalizada = cat_para_editar in st.session_state.categorias_personalizadas
             
-            if is_padrao:
-                st.info("📌 Esta é uma categoria padrão. Você pode renomeá-la, mas não pode apagá-la.")
-            elif is_personalizada:
-                st.info("✨ Categoria personalizada. Você pode renomear ou apagar.")
+            if is_padrao: st.info("📌 Categoria padrão (apenas renomeável).")
+            elif is_personalizada: st.info("✨ Categoria personalizada (pode editar ou apagar).")
             
-            # Renomear (qualquer categoria)
             novo_nome_cat = st.text_input("Novo nome:", key="novo_nome_cat")
             col1, col2 = st.columns(2)
             with col1:
                 if st.button("✏️ Renomear", key="rename_cat"):
                     if novo_nome_cat and novo_nome_cat not in get_categorias():
                         antigo = cat_para_editar
-                        novo = novo_nome_cat
-                        # Atualizar lista apropriada
                         if is_padrao:
-                            idx = st.session_state.categorias_padrao.index(antigo)
-                            st.session_state.categorias_padrao[idx] = novo
+                            st.session_state.categorias_padrao[st.session_state.categorias_padrao.index(antigo)] = novo_nome_cat
                         else:
-                            idx = st.session_state.categorias_personalizadas.index(antigo)
-                            st.session_state.categorias_personalizadas[idx] = novo
+                            st.session_state.categorias_personalizadas[st.session_state.categorias_personalizadas.index(antigo)] = novo_nome_cat
                         
-                        # Atualizar gastos fixos do mês atual
-                        if not st.session_state.gastos_fixos.empty:
-                            st.session_state.gastos_fixos.loc[
-                                st.session_state.gastos_fixos["Categoria"] == antigo, "Categoria"
-                            ] = novo
-                        
-                        # Atualizar gastos casuais do mês atual
-                        if not st.session_state.gastos_casuais.empty:
-                            st.session_state.gastos_casuais.loc[
-                                st.session_state.gastos_casuais["Categoria"] == antigo, "Categoria"
-                            ] = novo
-                        
-                        # Atualizar guias extras (parcelamentos)
+                        if not st.session_state.gastos_fixos.empty: st.session_state.gastos_fixos.loc[st.session_state.gastos_fixos["Categoria"] == antigo, "Categoria"] = novo_nome_cat
+                        if not st.session_state.gastos_casuais.empty: st.session_state.gastos_casuais.loc[st.session_state.gastos_casuais["Categoria"] == antigo, "Categoria"] = novo_nome_cat
                         for guia in st.session_state.guias_extras:
                             df_g = st.session_state[f"dados_{guia}"]
                             if not df_g.empty and "Categoria" in df_g.columns:
-                                df_g.loc[df_g["Categoria"] == antigo, "Categoria"] = novo
+                                df_g.loc[df_g["Categoria"] == antigo, "Categoria"] = novo_nome_cat
                                 st.session_state[f"dados_{guia}"] = df_g
-                        
                         salvar_dados_nuvem()
-                        st.success(f"Categoria '{antigo}' renomeada para '{novo}'.")
+                        st.success(f"Renomeada para '{novo_nome_cat}'.")
                         st.rerun()
-                    else:
-                        st.warning("Nome inválido ou já existe.")
-            
-            # Apagar apenas categorias personalizadas
             with col2:
                 if is_personalizada:
                     if st.button("🗑️ Apagar", key="delete_cat"):
                         if cat_para_editar:
                             st.session_state.categorias_personalizadas.remove(cat_para_editar)
-                            # Substituir por "Outros" nos registros
-                            if not st.session_state.gastos_fixos.empty:
-                                st.session_state.gastos_fixos.loc[
-                                    st.session_state.gastos_fixos["Categoria"] == cat_para_editar, "Categoria"
-                                ] = "Outros"
-                            if not st.session_state.gastos_casuais.empty:
-                                st.session_state.gastos_casuais.loc[
-                                    st.session_state.gastos_casuais["Categoria"] == cat_para_editar, "Categoria"
-                                ] = "Outros"
+                            if not st.session_state.gastos_fixos.empty: st.session_state.gastos_fixos.loc[st.session_state.gastos_fixos["Categoria"] == cat_para_editar, "Categoria"] = "Outros"
+                            if not st.session_state.gastos_casuais.empty: st.session_state.gastos_casuais.loc[st.session_state.gastos_casuais["Categoria"] == cat_para_editar, "Categoria"] = "Outros"
                             for guia in st.session_state.guias_extras:
                                 df_g = st.session_state[f"dados_{guia}"]
                                 if not df_g.empty and "Categoria" in df_g.columns:
                                     df_g.loc[df_g["Categoria"] == cat_para_editar, "Categoria"] = "Outros"
                                     st.session_state[f"dados_{guia}"] = df_g
                             salvar_dados_nuvem()
-                            st.success(f"Categoria '{cat_para_editar}' removida. Gastos movidos para 'Outros'.")
                             st.rerun()
-                else:
-                    st.button("🗑️ Apagar", disabled=True, help="Categorias padrão não podem ser apagadas")
 
-        # ========== FIM DA SEÇÃO DE CATEGORIAS ==========
-
+        # SEÇÃO DE GUIAS
         st.divider()
         st.subheader("🛠️ Gerenciar Guias")
         with st.expander("⚙️ Opções de gerenciamento"):
@@ -545,29 +447,9 @@ if check_password():
                 with col2:
                     if st.button("🗑️ Apagar", key="delete_guia"):
                         st.session_state.guias_extras.remove(g_ativa)
-                        if f"dados_{g_ativa}" in st.session_state:
-                            del st.session_state[f"dados_{g_ativa}"]
+                        if f"dados_{g_ativa}" in st.session_state: del st.session_state[f"dados_{g_ativa}"]
                         salvar_dados_nuvem()
                         st.rerun()
-
-                st.markdown("---")
-                st.write("🔼 Reordenar Guias")
-                guia_mover = st.selectbox("Selecione a guia:", st.session_state.guias_extras, key="guia_mover")
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    if st.button("⬆️ Mover Cima", key="move_up"):
-                        idx = st.session_state.guias_extras.index(guia_mover)
-                        if idx>0:
-                            st.session_state.guias_extras[idx], st.session_state.guias_extras[idx-1] = st.session_state.guias_extras[idx-1], st.session_state.guias_extras[idx]
-                            salvar_dados_nuvem()
-                            st.rerun()
-                with col_b:
-                    if st.button("⬇️ Mover Baixo", key="move_down"):
-                        idx = st.session_state.guias_extras.index(guia_mover)
-                        if idx < len(st.session_state.guias_extras)-1:
-                            st.session_state.guias_extras[idx], st.session_state.guias_extras[idx+1] = st.session_state.guias_extras[idx+1], st.session_state.guias_extras[idx]
-                            salvar_dados_nuvem()
-                            st.rerun()
 
     # --- CÁLCULOS PRINCIPAIS ---
     mes_n = MESES[st.session_state.mes_atual]
@@ -577,15 +459,12 @@ if check_password():
     
     total_guias = 0.0
     gastos_categoria = {}
-    # Gastos fixos
     for _, row in st.session_state.gastos_fixos.iterrows():
         cat = row.get("Categoria", "Outros")
         gastos_categoria[cat] = gastos_categoria.get(cat, 0.0) + row["Valor (R$)"]
-    # Gastos casuais
     for _, row in st.session_state.gastos_casuais.iterrows():
         cat = row["Categoria"]
         gastos_categoria[cat] = gastos_categoria.get(cat, 0.0) + row["Valor (R$)"]
-    # Guias extras
     for guia in st.session_state.guias_extras:
         _, tot_guia, cats_guia = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
         total_guias += tot_guia
@@ -597,8 +476,9 @@ if check_password():
 
     st.title(f"💰 {st.session_state.mes_atual} / {st.session_state.ano_atual}")
 
-    opcoes = ["Resumo Geral", "Renda", "Gastos Fixos", "Dia a Dia", "Resumo das Guias"] + st.session_state.guias_extras
-    sel = st.selectbox("Ir para:", opcoes)
+    # --- ADICIONADAS AS NOVAS ABAS DE MENU ---
+    opcoes = ["Resumo Geral", "Renda", "Gastos Fixos", "Dia a Dia", "Resumo das Guias", "Metas de Orçamento", "Pesquisa Global"] + st.session_state.guias_extras
+    sel = st.selectbox("Navegação do App:", opcoes)
     st.divider()
 
     if sel == "Resumo Geral":
@@ -611,6 +491,49 @@ if check_password():
         fig.update_layout(margin=dict(t=0,b=0,l=0,r=0), height=300)
         st.plotly_chart(fig, use_container_width=True)
 
+        # --- NOVO: GRÁFICO HISTÓRICO DE TENDÊNCIAS ---
+        st.divider()
+        st.subheader("📈 Evolução Financeira Anual")
+        historico_df_dados = []
+        chaves_todas = set(list(st.session_state.historico_fixos.keys()) + list(st.session_state.historico_casuais.keys()) + list(st.session_state.renda_por_mes.keys()))
+        
+        if chaves_todas:
+            for chave in chaves_todas:
+                try:
+                    mes_str, ano_str = chave.split('_')
+                    mes_idx = MESES.get(mes_str, 1)
+                    ano_num = int(ano_str)
+                    
+                    df_fixos = pd.DataFrame(st.session_state.historico_fixos.get(chave, []))
+                    tot_f = df_fixos['Valor (R$)'].sum() if not df_fixos.empty and 'Valor (R$)' in df_fixos.columns else 0.0
+                    
+                    df_cas = pd.DataFrame(st.session_state.historico_casuais.get(chave, []))
+                    tot_c = df_cas['Valor (R$)'].sum() if not df_cas.empty and 'Valor (R$)' in df_cas.columns else 0.0
+                    
+                    tot_g = 0.0
+                    for g in st.session_state.guias_extras:
+                        _, t_g, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{g}"), mes_idx, ano_num)
+                        tot_g += t_g
+                        
+                    df_ren = pd.DataFrame(st.session_state.renda_por_mes.get(chave, []))
+                    tot_r = df_ren['Valor (R$)'].sum() if not df_ren.empty and 'Valor (R$)' in df_ren.columns else 0.0
+                    
+                    tot_d = tot_f + tot_c + tot_g
+                    
+                    historico_df_dados.append({
+                        "Data_Sort": datetime(ano_num, mes_idx, 1),
+                        "Mês": f"{mes_str}/{ano_str}",
+                        "Renda": tot_r,
+                        "Despesas": tot_d,
+                        "Sobra": tot_r - tot_d
+                    })
+                except: continue
+                
+            if historico_df_dados:
+                df_hist = pd.DataFrame(historico_df_dados).sort_values("Data_Sort")
+                fig_hist = px.line(df_hist, x="Mês", y=["Renda", "Despesas", "Sobra"], markers=True)
+                st.plotly_chart(fig_hist, use_container_width=True)
+
     elif sel == "Renda":
         st.subheader("💵 Fontes de Renda")
         er = st.data_editor(st.session_state.renda_detalhada, num_rows="dynamic", use_container_width=True, hide_index=True,
@@ -622,11 +545,27 @@ if check_password():
     elif sel == "Gastos Fixos":
         ct, cb = st.columns([3,1])
         ct.subheader("📌 Contas Fixas")
-        if cb.button("🔄 Importar"):
+        if cb.button("🔄 Importar de Mês Anterior"):
             carregar_dados_sessao(True)
             salvar_dados_nuvem()
             st.rerun()
-        # Adicionar coluna de Categoria no editor
+
+        # --- NOVO: FORMULÁRIO DE LANÇAMENTO RÁPIDO ---
+        with st.expander("➕ Lançamento Rápido de Fixos", expanded=False):
+            with st.form("form_novo_fixo"):
+                c1, c2, c3 = st.columns([2, 1, 1])
+                n_desc = c1.text_input("Descrição do Gasto")
+                n_cat = c2.selectbox("Categoria", get_categorias())
+                n_val = c3.number_input("Valor (R$)", min_value=0.0, format="%.2f")
+                if st.form_submit_button("Guardar Lançamento"):
+                    if n_desc:
+                        nova_linha = pd.DataFrame([{"Descrição": n_desc, "Valor (R$)": n_val, "Pago": False, "Categoria": n_cat}])
+                        st.session_state.gastos_fixos = pd.concat([st.session_state.gastos_fixos, nova_linha], ignore_index=True)
+                        salvar_dados_nuvem()
+                        st.success("Adicionado com sucesso!")
+                        st.rerun()
+                    else: st.warning("Por favor, preencha a descrição.")
+
         ef = st.data_editor(
             st.session_state.gastos_fixos,
             num_rows="dynamic",
@@ -644,6 +583,24 @@ if check_password():
 
     elif sel == "Dia a Dia":
         st.subheader("🛍️ Compras Casuais")
+
+        # --- NOVO: FORMULÁRIO DE LANÇAMENTO RÁPIDO ---
+        with st.expander("➕ Lançamento Rápido do Dia a Dia", expanded=False):
+            with st.form("form_novo_casual"):
+                c1, c2 = st.columns(2)
+                n_data = c1.date_input("Data do Registo", datetime.now().date())
+                n_cat = c2.selectbox("Categoria", get_categorias())
+                n_desc = st.text_input("Descrição da Compra")
+                n_val = st.number_input("Valor (R$)", min_value=0.0, format="%.2f")
+                if st.form_submit_button("Guardar Registo"):
+                    if n_desc:
+                        nova_linha = pd.DataFrame([{"Data": n_data, "Categoria": n_cat, "Descrição": n_desc, "Valor (R$)": n_val}])
+                        st.session_state.gastos_casuais = pd.concat([st.session_state.gastos_casuais, nova_linha], ignore_index=True)
+                        salvar_dados_nuvem()
+                        st.success("Compra registada com sucesso!")
+                        st.rerun()
+                    else: st.warning("A descrição não pode estar vazia.")
+
         ec = st.data_editor(st.session_state.gastos_casuais, num_rows="dynamic", use_container_width=True, hide_index=True,
                             column_config={"Data": st.column_config.DateColumn(format="DD/MM/YYYY"),
                                            "Categoria": st.column_config.SelectboxColumn(options=get_categorias()),
@@ -651,6 +608,72 @@ if check_password():
         if not ec.equals(st.session_state.gastos_casuais):
             st.session_state.gastos_casuais = ec
             salvar_dados_nuvem()
+
+    # --- NOVO: METAS DE ORÇAMENTO ---
+    elif sel == "Metas de Orçamento":
+        st.subheader("🎯 Metas e Limites Mensais")
+        st.write("Defina um orçamento para cada categoria e garanta que não ultrapassa o planeado.")
+        
+        with st.expander("⚙️ Configurar Novo Limite"):
+            with st.form("form_metas"):
+                cat_meta = st.selectbox("Escolha a Categoria", get_categorias())
+                val_meta = st.number_input("Orçamento Máximo (R$)", min_value=0.0, step=50.0)
+                if st.form_submit_button("Gravar Meta"):
+                    st.session_state.metas_orcamento[cat_meta] = val_meta
+                    salvar_dados_nuvem()
+                    st.success(f"Meta de '{cat_meta}' guardada com sucesso!")
+                    st.rerun()
+
+        st.markdown("---")
+        # Mostrar Barras de Progresso
+        metas_ativas = st.session_state.metas_orcamento
+        if not metas_ativas:
+            st.info("Nenhuma meta definida. Use o menu acima para criar o seu primeiro orçamento.")
+        else:
+            for cat, limite in metas_ativas.items():
+                gasto_atual = gastos_categoria.get(cat, 0.0)
+                perc = gasto_atual / limite if limite > 0 else 0
+                perc_visual = min(perc, 1.0)
+                
+                st.write(f"**{cat}**: Gasto R$ {gasto_atual:.2f} de R$ {limite:.2f} ({(perc*100):.1f}%)")
+                st.progress(perc_visual)
+                if perc >= 1.0:
+                    st.error(f"⚠️ Atenção! O orçamento de {cat} foi ultrapassado em R$ {gasto_atual - limite:.2f}.")
+
+    # --- NOVO: PESQUISA GLOBAL ---
+    elif sel == "Pesquisa Global":
+        st.subheader("🔍 Procurar no Histórico")
+        termo = st.text_input("Escreva uma palavra (Ex: Colchão, Amazon, Combustível, Médico):").strip().lower()
+        
+        if termo:
+            resultados = []
+            
+            # Varre Fixos
+            for chave, df_list in st.session_state.historico_fixos.items():
+                for row in df_list:
+                    if termo in str(row.get('Descrição','')).lower() or termo in str(row.get('Categoria','')).lower():
+                        resultados.append({"Referência": chave, "Tipo": "Despesa Fixa", "Data": "-", "Categoria": row.get('Categoria',''), "Descrição": row.get('Descrição',''), "Valor": f"R$ {row.get('Valor (R$)',0):.2f}"})
+                        
+            # Varre Casuais
+            for chave, df_list in st.session_state.historico_casuais.items():
+                for row in df_list:
+                    if termo in str(row.get('Descrição','')).lower() or termo in str(row.get('Categoria','')).lower():
+                        resultados.append({"Referência": chave, "Tipo": "Dia a Dia", "Data": row.get('Data','-'), "Categoria": row.get('Categoria',''), "Descrição": row.get('Descrição',''), "Valor": f"R$ {row.get('Valor (R$)',0):.2f}"})
+            
+            # Varre Guias/Cartões
+            for g in st.session_state.guias_extras:
+                df_g = st.session_state.get(f"dados_{g}")
+                if df_g is not None and not df_g.empty:
+                    for _, row in df_g.iterrows():
+                        if termo in str(row.get('Descrição','')).lower() or termo in str(row.get('Categoria','')).lower():
+                            resultados.append({"Referência": f"Fatura: {g}", "Tipo": "Parcelamento", "Data": f"Mês {row.get('Mês Início (1-12)')}/{row.get('Ano Início')}", "Categoria": row.get('Categoria',''), "Descrição": row.get('Descrição',''), "Valor": f"R$ {row.get('Valor Parcela (R$)',0):.2f}"})
+            
+            if resultados:
+                df_res = pd.DataFrame(resultados)
+                st.success(f"Foram encontrados {len(df_res)} registos em toda a sua conta!")
+                st.dataframe(df_res, use_container_width=True, hide_index=True)
+            else:
+                st.warning("Não foi encontrado nenhum registo com essa palavra. Tente outro termo.")
 
     elif sel == "Resumo das Guias":
         st.subheader("📊 Comparativo de Custos por Guia")
@@ -676,7 +699,7 @@ if check_password():
             fig_cat = px.bar(df_cat, x="Categoria", y="Valor (R$)", color="Categoria", text_auto='.2f')
             st.plotly_chart(fig_cat, use_container_width=True)
         else:
-            st.info("Nenhum gasto registrado neste mês.")
+            st.info("Nenhum gasto registado neste mês.")
 
     else:  # Guias extras individuais
         df_parc, total_parc, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{sel}"), mes_n, ano_r)
@@ -698,37 +721,3 @@ if check_password():
             salvar_dados_nuvem()
             st.rerun()
 
-    # --- PROJEÇÃO FUTURA ---
-    if ver_projecao:
-        st.divider()
-        st.subheader("📅 Fluxo de Caixa Previsto (6 Meses)")
-        meses_anteriores = []
-        for i in range(1,4):
-            m_c = mes_n - i
-            a_c = ano_r
-            if m_c <= 0:
-                m_c += 12
-                a_c -= 1
-            meses_anteriores.append((a_c, m_c))
-        media_casuais = recalcular_media_casuais(meses_anteriores)
-        if media_casuais == 0 and t_cas > 0:
-            media_casuais = t_cas
-        proj = []
-        for i in range(6):
-            m_f = mes_n + i
-            a_f = ano_r
-            while m_f > 12:
-                m_f -= 12
-                a_f += 1
-            t_g_f = 0.0
-            for g in st.session_state.guias_extras:
-                _, tot, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{g}"), m_f, a_f)
-                t_g_f += tot
-            t_d_f = t_fix + media_casuais + t_g_f
-            proj.append({"Mês": f"{list(MESES.keys())[m_f-1]}/{a_f}", "Renda": total_renda, "Fixos": t_fix,
-                         "Casuais (média)": media_casuais, "Guias": t_g_f, "Despesa Total": t_d_f, "Sobra": total_renda - t_d_f})
-        df_proj = pd.DataFrame(proj)
-        st.plotly_chart(px.bar(df_proj, x="Mês", y=["Fixos","Casuais (média)","Guias"], barmode="stack", text_auto='.2f'), use_container_width=True)
-        st.dataframe(df_proj.style.format({c:"R$ {:.2f}" for c in df_proj.columns if c!="Mês"}), use_container_width=True)
-        if (df_proj["Sobra"] < 0).any():
-            st.warning("⚠️ Atenção: há meses com sobra negativa prevista.")

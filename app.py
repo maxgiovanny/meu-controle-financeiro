@@ -27,13 +27,21 @@ except Exception:
     st.error("Erro de conexão com a nuvem.")
     st.stop()
 
+# --- FUNÇÃO PARA PEGAR MÊS ANTERIOR ---
+def obter_mes_anterior(mes_nome, ano_atual):
+    lista_meses = list(MESES.keys())
+    idx = lista_meses.index(mes_nome)
+    if idx == 0: # Janeiro -> Dezembro do ano anterior
+        return "Dezembro", ano_atual - 1
+    else:
+        return lista_meses[idx - 1], ano_atual
+
 # --- FUNÇÕES DE DADOS ---
 def salvar_dados_nuvem():
     chave = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
     casuais_save = st.session_state.gastos_casuais.copy()
     if "Data" in casuais_save.columns: casuais_save["Data"] = casuais_save["Data"].astype(str)
     
-    # Atualiza históricos locais antes de subir
     st.session_state.historico_fixos[chave] = st.session_state.gastos_fixos.to_dict("records")
     st.session_state.historico_casuais[chave] = casuais_save.to_dict("records")
 
@@ -47,37 +55,35 @@ def salvar_dados_nuvem():
     worksheet.update(values=[[json.dumps(dados)]], range_name='A1')
     st.toast("💾 Sincronizado!", icon="✅")
 
-def carregar_dados_sessao(manual=False):
-    # Se for manual (Botão Importar), ele relê o Google Sheets do zero
-    if manual:
-        val = worksheet.acell('A1').value
-        if val:
-            d = json.loads(val)
-            st.session_state.historico_fixos = d.get("historico_fixos", {})
-    
+def carregar_dados_sessao(importar_do_anterior=False):
     chave_atual = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
     
     # LÓGICA DE GASTOS FIXOS
-    if chave_atual in st.session_state.historico_fixos and not manual:
+    if importar_do_anterior:
+        # Busca EXATAMENTE o mês anterior cronológico
+        m_ant, a_ant = obter_mes_anterior(st.session_state.mes_atual, st.session_state.ano_atual)
+        chave_ant = f"{m_ant}_{a_ant}"
+        
+        if chave_ant in st.session_state.historico_fixos:
+            df_base = pd.DataFrame(st.session_state.historico_fixos[chave_ant])
+            if not df_base.empty:
+                df_base["Pago"] = False
+                st.session_state.gastos_fixos = df_base
+                st.success(f"Dados importados de {m_ant}!")
+            else:
+                st.warning(f"O mês de {m_ant} está vazio.")
+        else:
+            st.error(f"Não há dados salvos em {m_ant} para importar.")
+        return
+
+    # Carregamento Padrão
+    if chave_atual in st.session_state.historico_fixos:
         st.session_state.gastos_fixos = pd.DataFrame(st.session_state.historico_fixos[chave_atual])
     else:
-        # Tenta achar o mês anterior cronológico para importar
-        df_importado = pd.DataFrame(columns=["Descrição", "Valor (R$)", "Pago"])
-        if st.session_state.historico_fixos:
-            lista_meses = list(MESES.keys())
-            idx_atual = lista_meses.index(st.session_state.mes_atual)
-            mes_anterior = lista_meses[idx_atual - 1] if idx_atual > 0 else "Dezembro"
-            ano_anterior = st.session_state.ano_atual if idx_atual > 0 else st.session_state.ano_atual - 1
-            chave_anterior = f"{mes_anterior}_{ano_anterior}"
-            
-            if chave_anterior in st.session_state.historico_fixos:
-                df_importado = pd.DataFrame(st.session_state.historico_fixos[chave_anterior])
-                if not df_importado.empty: df_importado["Pago"] = False
-        
-        st.session_state.gastos_fixos = df_importado
+        st.session_state.gastos_fixos = pd.DataFrame(columns=["Descrição", "Valor (R$)", "Pago"])
 
-    # LÓGICA DE GASTOS CASUAIS
-    if chave_atual in st.session_state.historico_casuais and not manual:
+    # Carregamento Casuais
+    if chave_atual in st.session_state.historico_casuais:
         df_c = pd.DataFrame(st.session_state.historico_casuais[chave_atual])
         if not df_c.empty:
             df_c["Data"] = pd.to_datetime(df_c.get("Data", datetime.now().date())).dt.date
@@ -95,6 +101,7 @@ if "dados_carregados" not in st.session_state:
     st.session_state.guias_extras = d.get("guias_extras", [])
     st.session_state.historico_fixos = d.get("historico_fixos", {})
     st.session_state.historico_casuais = d.get("historico_casuais", {})
+    st.session_state.backup_anterior = None
     for g in st.session_state.guias_extras:
         st.session_state[f"dados_{g}"] = pd.DataFrame(d.get(f"dados_{g}", []))
     carregar_dados_sessao()
@@ -117,13 +124,21 @@ def calc_parc(df, m, a):
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Configurações")
+    if st.session_state.backup_anterior:
+        if st.button("🔙 Desfazer"):
+            b = st.session_state.backup_anterior
+            st.session_state.renda, st.session_state.guias_extras = b["renda"], b["guias_extras"]
+            st.session_state.gastos_fixos, st.session_state.gastos_casuais = b["gastos_fixos"], b["gastos_casuais"]
+            st.session_state.historico_fixos, st.session_state.historico_casuais = b["historico_fixos"], b["historico_casuais"]
+            st.session_state.backup_anterior = None
+            salvar_dados_nuvem(); st.rerun()
+
     m_sel = st.selectbox("Mês:", list(MESES.keys()), index=list(MESES.keys()).index(st.session_state.mes_atual))
     a_sel = st.number_input("Ano:", 2024, 2030, st.session_state.ano_atual)
     if m_sel != st.session_state.mes_atual or a_sel != st.session_state.ano_atual:
-        salvar_dados_nuvem()
-        st.session_state.mes_atual, st.session_state.ano_atual = m_sel, a_sel
-        carregar_dados_sessao()
-        st.rerun()
+        salvar_dados_nuvem(); st.session_state.mes_atual, st.session_state.ano_atual = m_sel, a_sel
+        carregar_dados_sessao(); st.rerun()
+
     r_sel = st.number_input("Renda:", 0.0, 100000.0, st.session_state.renda, 100.0)
     if r_sel != st.session_state.renda: st.session_state.renda = r_sel; salvar_dados_nuvem()
 
@@ -137,6 +152,12 @@ with st.sidebar:
 
     if st.session_state.guias_extras:
         gf = st.selectbox("Guia Ativa:", st.session_state.guias_extras)
+        nn = st.text_input("Novo Nome:")
+        if st.button("📝 Renomear"):
+            if nn and nn not in st.session_state.guias_extras:
+                st.session_state.guias_extras[st.session_state.guias_extras.index(gf)] = nn
+                st.session_state[f"dados_{nn}"] = st.session_state[f"dados_{gf}"]
+                del st.session_state[f"dados_{gf}"]; salvar_dados_nuvem(); st.rerun()
         if st.button("🗑️ Apagar"):
             st.session_state.guias_extras.remove(gf)
             if f"dados_{gf}" in st.session_state: del st.session_state[f"dados_{gf}"]
@@ -159,9 +180,9 @@ if sel == "Resumo Geral":
     c1, c2 = st.columns(2); c1.metric("Gasto Total", f"R$ {gt:,.2f}"); c2.metric("Sobra", f"R$ {sobra:,.2f}")
 
 elif sel == "Gastos Fixos":
-    ct, cb = st.columns([3, 1]); ct.subheader("📌 Contas"); 
-    if cb.button("🔄 Importar"): 
-        carregar_dados_sessao(manual=True)
+    ct, cb = st.columns([3, 1]); ct.subheader("📌 Contas")
+    if cb.button("🔄 Importar"):
+        carregar_dados_sessao(importar_do_anterior=True)
         salvar_dados_nuvem()
         st.rerun()
     

@@ -159,75 +159,133 @@ if check_password():
         soma_cat = df_parc.groupby("Categoria")["Valor (R$)"].sum().to_dict() if not df_parc.empty else {}
         return df_parc, total, soma_cat
 
-    # --- REMOVER ACENTOS PARA PDF ---
+    # --- FUNÇÕES DE PDF E FORMATAÇÃO ---
     def remover_acentos(texto):
         if not isinstance(texto, str):
             texto = str(texto)
         return unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')
 
-    # --- GERAR PDF ---
+    def formatar_moeda(valor):
+        """Formata o número para o padrão de moeda brasileiro (R$ 1.234,56)"""
+        return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
     def gerar_pdf_mes(mes_nome, ano, renda_df, fixos_df, casuais_df, guias_dados, total_renda, t_fix, t_cas, t_gui, sobra, dados_categoria):
         pdf = FPDF()
         pdf.add_page()
+        
+        # --- CABEÇALHO ---
         pdf.set_font('helvetica', 'B', 16)
-        pdf.cell(0, 10, remover_acentos(f"Relatorio Financeiro - {mes_nome}/{ano}"), ln=True, align="C")
+        pdf.set_fill_color(46, 125, 50) # Verde escuro
+        pdf.set_text_color(255, 255, 255)
+        pdf.cell(0, 12, remover_acentos(f"Relatório Financeiro - {mes_nome} {ano}"), ln=True, align="C", fill=True)
         pdf.ln(5)
+        pdf.set_text_color(0, 0, 0) # Volta para preto
         
-        pdf.set_font_size(12)
-        pdf.set_font(style='B')
-        pdf.cell(0, 8, remover_acentos(f"Renda Total: R$ {total_renda:.2f}"), ln=True)
-        pdf.set_font(style='')
+        # --- RENDA ---
+        pdf.set_font('helvetica', 'B', 12)
+        pdf.set_fill_color(230, 230, 230) # Fundo Cinza claro
+        pdf.cell(140, 8, remover_acentos("  Renda Mensal"), border=1, fill=True)
+        pdf.cell(50, 8, formatar_moeda(total_renda), border=1, ln=True, align="R", fill=True)
+        
+        pdf.set_font('helvetica', '', 10)
         for _, row in renda_df.iterrows():
-            pdf.cell(0, 6, remover_acentos(f"{row['Fonte']}: R$ {row['Valor (R$)']:.2f}"), ln=True)
-        pdf.ln(5)
+            pdf.cell(140, 6, remover_acentos(f"    {row['Fonte']}"))
+            pdf.cell(50, 6, formatar_moeda(row['Valor (R$)']), ln=True, align="R")
+        pdf.ln(4)
         
-        pdf.set_font(style='B')
-        pdf.cell(0, 8, remover_acentos(f"Despesas Fixas: R$ {t_fix:.2f}"), ln=True)
-        pdf.set_font(style='')
+        # --- DESPESAS FIXAS ---
+        pdf.set_font('helvetica', 'B', 12)
+        pdf.set_fill_color(230, 230, 230)
+        pdf.cell(140, 8, remover_acentos("  Despesas Fixas"), border=1, fill=True)
+        pdf.cell(50, 8, formatar_moeda(t_fix), border=1, ln=True, align="R", fill=True)
+        
+        pdf.set_font('helvetica', '', 10)
         for _, row in fixos_df.iterrows():
-            status = "Pago" if row.get("Pago", False) else "Pendente"
-            desc = row['Descrição'] if 'Descrição' in row else ''
-            cat = row['Categoria'] if 'Categoria' in row else ''
-            pdf.cell(0, 6, remover_acentos(f"{desc} ({cat}): R$ {row['Valor (R$)']:.2f} ({status})"), ln=True)
-        pdf.ln(5)
+            status = "(Pago)" if row.get("Pago", False) else "(Pendente)"
+            desc = str(row.get('Descrição', ''))
+            cat = str(row.get('Categoria', ''))
+            linha_texto = f"    {desc} [{cat}] {status}"
+            if len(linha_texto) > 75: linha_texto = linha_texto[:72] + "..."
+            
+            pdf.cell(140, 6, remover_acentos(linha_texto))
+            pdf.cell(50, 6, formatar_moeda(row['Valor (R$)']), ln=True, align="R")
+        pdf.ln(4)
         
-        pdf.set_font(style='B')
-        pdf.cell(0, 8, remover_acentos(f"Despesas do Dia a Dia: R$ {t_cas:.2f}"), ln=True)
-        pdf.set_font(style='')
+        # --- DESPESAS DIA A DIA ---
+        pdf.set_font('helvetica', 'B', 12)
+        pdf.set_fill_color(230, 230, 230)
+        pdf.cell(140, 8, remover_acentos("  Despesas do Dia a Dia"), border=1, fill=True)
+        pdf.cell(50, 8, formatar_moeda(t_cas), border=1, ln=True, align="R", fill=True)
+        
+        pdf.set_font('helvetica', '', 10)
         for _, row in casuais_df.iterrows():
-            data_str = row['Data'].strftime("%d/%m/%Y") if hasattr(row['Data'],'strftime') else str(row['Data'])
-            desc = row['Descrição'] if 'Descrição' in row else ''
-            pdf.cell(0, 6, remover_acentos(f"{data_str} - {row['Categoria']} - {desc}: R$ {row['Valor (R$)']:.2f}"), ln=True)
-        pdf.ln(5)
+            data_str = row['Data'].strftime("%d/%m") if hasattr(row['Data'],'strftime') else str(row['Data'])[:5]
+            desc = str(row.get('Descrição', ''))
+            cat = str(row.get('Categoria', ''))
+            linha_texto = f"    {data_str} | {cat} - {desc}"
+            if len(linha_texto) > 75: linha_texto = linha_texto[:72] + "..."
+            
+            pdf.cell(140, 6, remover_acentos(linha_texto))
+            pdf.cell(50, 6, formatar_moeda(row['Valor (R$)']), ln=True, align="R")
+        pdf.ln(4)
         
-        pdf.set_font(style='B')
-        pdf.cell(0, 8, remover_acentos(f"Guias (Parcelamentos): R$ {t_gui:.2f}"), ln=True)
-        pdf.set_font(style='')
+        # --- GUIAS / PARCELAMENTOS ---
+        pdf.set_font('helvetica', 'B', 12)
+        pdf.set_fill_color(230, 230, 230)
+        pdf.cell(140, 8, remover_acentos("  Guias (Cartões e Parcelamentos)"), border=1, fill=True)
+        pdf.cell(50, 8, formatar_moeda(t_gui), border=1, ln=True, align="R", fill=True)
+        
         for guia, parcelas in guias_dados.items():
+            if not parcelas: continue
+            
+            # Título da Guia
+            pdf.set_font('helvetica', 'B', 10)
+            pdf.cell(190, 6, remover_acentos(f"    [{guia}]"), ln=True)
+            
+            # Itens da guia
+            pdf.set_font('helvetica', '', 10)
             for row in parcelas:
-                pdf.cell(0, 6, remover_acentos(f"{guia} - {row['Descrição']} ({row['Categoria']}): R$ {row['Valor (R$)']:.2f}"), ln=True)
-        pdf.ln(5)
+                linha_texto = f"        - {row['Descrição']} ({row['Categoria']})"
+                if len(linha_texto) > 70: linha_texto = linha_texto[:67] + "..."
+                pdf.cell(140, 6, remover_acentos(linha_texto))
+                pdf.cell(50, 6, formatar_moeda(row['Valor (R$)']), ln=True, align="R")
+        pdf.ln(4)
         
-        pdf.set_font(style='B')
-        pdf.cell(0, 8, remover_acentos("Gastos por Categoria"), ln=True)
-        pdf.set_font(style='')
-        for cat, valor in dados_categoria.items():
-            pdf.cell(0, 6, remover_acentos(f"{cat}: R$ {valor:.2f}"), ln=True)
-        pdf.ln(5)
+        # --- RESUMO POR CATEGORIA ---
+        pdf.set_font('helvetica', 'B', 12)
+        pdf.set_fill_color(230, 230, 230)
+        pdf.cell(140, 8, remover_acentos("  Resumo de Gastos por Categoria"), border=1, fill=True)
+        pdf.cell(50, 8, "", border=1, ln=True, align="R", fill=True)
         
-        pdf.set_font(style='B')
+        pdf.set_font('helvetica', '', 10)
+        # Ordena do maior pro menor
+        for cat, valor in sorted(dados_categoria.items(), key=lambda x: x[1], reverse=True):
+            pdf.cell(140, 6, remover_acentos(f"    {cat}"))
+            pdf.cell(50, 6, formatar_moeda(valor), ln=True, align="R")
+        pdf.ln(6)
+        
+        # --- SOBRA FINAL ---
+        pdf.set_font('helvetica', 'B', 14)
         if sobra >= 0:
-            pdf.set_text_color(0,150,0)
+            pdf.set_fill_color(220, 255, 220) # Verde claro
+            pdf.set_text_color(0, 100, 0) # Texto verde escuro
         else:
-            pdf.set_text_color(200,0,0)
-        pdf.cell(0, 8, remover_acentos(f"RESUMO: Sobra R$ {sobra:.2f}"), ln=True)
-        pdf.set_text_color(0,0,0)
+            pdf.set_fill_color(255, 220, 220) # Vermelho claro
+            pdf.set_text_color(150, 0, 0) # Texto vermelho escuro
+            
+        pdf.cell(140, 12, remover_acentos("  SALDO FINAL DO MÊS:"), border=1, fill=True)
+        pdf.cell(50, 12, formatar_moeda(sobra), border=1, ln=True, align="R", fill=True)
+        pdf.set_text_color(0,0,0) # Retorna pro preto normal
         
+        # --- SALVAR E RETORNAR BYTES ---
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             temp_path = tmp.name
+        
         pdf.output(temp_path)
+        
         with open(temp_path, "rb") as f:
             pdf_data = f.read()
+            
         os.remove(temp_path)
         return pdf_data
 

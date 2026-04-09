@@ -27,7 +27,7 @@ except Exception:
     st.error("Erro de conexão com a nuvem.")
     st.stop()
 
-# --- AUXILIARES (IMPORTAÇÃO APROVADA) ---
+# --- AUXILIARES ---
 def obter_mes_anterior(mes_nome, ano_atual):
     lista = list(MESES.keys())
     idx = lista.index(mes_nome)
@@ -49,12 +49,11 @@ def salvar_dados_nuvem():
         if f"dados_{g}" in st.session_state: dados[f"dados_{g}"] = st.session_state[f"dados_{g}"].to_dict("records")
     
     worksheet.update(values=[[json.dumps(dados)]], range_name='A1')
-    st.toast("💾 Sincronizado com Sucesso!", icon="✅")
+    st.toast("💾 Sincronizado!", icon="✅")
 
 def carregar_dados_sessao(importar_do_anterior=False):
     chave_atual = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
     
-    # LÓGICA DE GASTOS FIXOS (SÓ REPETE SE CLICAR NO BOTÃO IMPORTAR)
     if importar_do_anterior:
         m_ant, a_ant = obter_mes_anterior(st.session_state.mes_atual, st.session_state.ano_atual)
         chave_ant = f"{m_ant}_{a_ant}"
@@ -68,7 +67,6 @@ def carregar_dados_sessao(importar_do_anterior=False):
         else: st.error("Sem dados no mês anterior.")
         return
 
-    # Carregamento Padrão (Sem repetição automática)
     if chave_atual in st.session_state.historico_fixos:
         st.session_state.gastos_fixos = pd.DataFrame(st.session_state.historico_fixos[chave_atual])
     else:
@@ -105,7 +103,6 @@ def calc_parc(df, m, a):
         try:
             m_i, a_i, qtd, v = int(r["Mês Início (1-12)"]), int(r["Ano Início"]), int(r["Qtd Parcelas"]), float(r["Valor Parcela (R$)"])
             alvo, ini = a * 12 + m, a_i * 12 + m_i
-            # Lógica matemática estrita: só aparece se o mês estiver dentro do intervalo de parcelas
             if ini <= alvo <= (ini + qtd - 1):
                 at.append({"Descrição": r["Descrição"], "Parcela": f"{alvo-ini+1}/{qtd}", "Valor (R$)": v})
                 tot += v
@@ -117,12 +114,17 @@ with st.sidebar:
     st.header("⚙️ Configurações")
     m_sel = st.selectbox("Mês:", list(MESES.keys()), index=list(MESES.keys()).index(st.session_state.mes_atual))
     a_sel = st.number_input("Ano:", 2024, 2030, st.session_state.ano_atual)
+    
     if m_sel != st.session_state.mes_atual or a_sel != st.session_state.ano_atual:
+        salvar_dados_nuvem()
         st.session_state.mes_atual, st.session_state.ano_atual = m_sel, a_sel
         carregar_dados_sessao()
         st.rerun()
+
     r_sel = st.number_input("Renda:", value=st.session_state.renda, step=100.0)
-    if r_sel != st.session_state.renda: st.session_state.renda = r_sel; salvar_dados_nuvem()
+    if r_sel != st.session_state.renda:
+        st.session_state.renda = r_sel
+        salvar_dados_nuvem()
 
     st.divider(); st.subheader("🛠️ Gerenciar Guias")
     ng = st.text_input("Nova Guia:")
@@ -134,6 +136,16 @@ with st.sidebar:
 
     if st.session_state.guias_extras:
         gf = st.selectbox("Guia Ativa:", st.session_state.guias_extras)
+        
+        nn = st.text_input("Renomear para:")
+        if st.button("📝 Renomear"):
+            if nn and nn not in st.session_state.guias_extras:
+                idx = st.session_state.guias_extras.index(gf)
+                st.session_state.guias_extras[idx] = nn
+                st.session_state[f"dados_{nn}"] = st.session_state[f"dados_{gf}"]
+                del st.session_state[f"dados_{gf}"]
+                salvar_dados_nuvem(); st.rerun()
+        
         if st.button("🗑️ Apagar"):
             st.session_state.guias_extras.remove(gf)
             if f"dados_{gf}" in st.session_state: del st.session_state[f"dados_{gf}"]
@@ -158,42 +170,32 @@ if sel == "Resumo Geral":
 elif sel == "Gastos Fixos":
     ct, cb = st.columns([3, 1]); ct.subheader("📌 Contas")
     if cb.button("🔄 Importar"): 
-        carregar_dados_sessao(importar_do_anterior=True)
-        st.rerun()
+        carregar_dados_sessao(importar_do_anterior=True); salvar_dados_nuvem(); st.rerun()
     
-    df_f = st.session_state.gastos_fixos
-    # FOCO: O editor não salva sozinho agora para evitar o lag
+    df_f = st.session_state.gastos_fixos if not st.session_state.gastos_fixos.empty else pd.DataFrame(columns=["Descrição", "Valor (R$)", "Pago"])
     ef = st.data_editor(df_f, num_rows="dynamic", use_container_width=True, hide_index=True)
-    st.session_state.gastos_fixos = ef
-    
-    st.divider()
-    if st.button("💾 Confirmar e Salvar Dados", use_container_width=True, type="primary"):
+    if not ef.equals(st.session_state.gastos_fixos):
+        st.session_state.gastos_fixos = ef
         salvar_dados_nuvem()
 
 elif sel == "Dia a Dia":
     st.subheader("🛍️ Compras Diárias")
-    df_c = st.session_state.gastos_casuais
+    df_c = st.session_state.gastos_casuais if not st.session_state.gastos_casuais.empty else pd.DataFrame(columns=["Data", "Categoria", "Descrição", "Valor (R$)"])
     ec = st.data_editor(df_c, num_rows="dynamic", use_container_width=True, hide_index=True,
         column_config={"Data": st.column_config.DateColumn(format="DD/MM/YYYY"), "Categoria": st.column_config.SelectboxColumn(options=CATEGORIAS)})
-    st.session_state.gastos_casuais = ec
-    
+    if not ec.equals(st.session_state.gastos_casuais):
+        st.session_state.gastos_casuais = ec
+        salvar_dados_nuvem()
     if not st.session_state.gastos_casuais.empty:
         st.divider(); st.dataframe(st.session_state.gastos_casuais.groupby("Categoria")["Valor (R$)"].sum().reset_index(), use_container_width=True, hide_index=True)
-    
-    st.divider()
-    if st.button("💾 Confirmar e Salvar Dados", use_container_width=True, type="primary"):
-        salvar_dados_nuvem()
 
 else:
     dr, vt = calc_parc(st.session_state.get(f"dados_{sel}"), mes_n, ano_r)
     st.subheader(f"Total no Mês: R$ {vt:,.2f}")
     if not dr.empty: st.dataframe(dr, use_container_width=True, hide_index=True)
-    st.divider(); st.subheader("Base de Compras (Tabela Geral)")
-    de = st.session_state[f"dados_{sel}"]
+    st.divider(); st.subheader("Base de Compras")
+    de = st.session_state[f"dados_{sel}"] if not st.session_state[f"dados_{sel}"].empty else pd.DataFrame(columns=["Descrição", "Valor Parcela (R$)", "Mês Início (1-12)", "Ano Início", "Qtd Parcelas"])
     eg = st.data_editor(de, num_rows="dynamic", use_container_width=True, hide_index=True)
-    st.session_state[f"dados_{sel}"] = eg
-    
-    st.divider()
-    if st.button("💾 Confirmar e Salvar Dados", use_container_width=True, type="primary"):
-        salvar_dados_nuvem()
-        st.rerun()
+    if not eg.equals(st.session_state[f"dados_{sel}"]):
+        st.session_state[f"dados_{sel}"] = eg
+        salvar_dados_nuvem(); st.rerun()

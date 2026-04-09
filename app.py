@@ -32,7 +32,7 @@ except Exception:
     st.error("Erro de conexão com o Google Sheets.")
     st.stop()
 
-# --- FUNÇÕES DE SEGURANÇA (BACKUP / DESFAZER) ---
+# --- FUNÇÕES DE SEGURANÇA ---
 def criar_ponto_restauracao():
     backup = {
         "renda": st.session_state.renda,
@@ -54,7 +54,6 @@ def salvar_dados_nuvem():
     if "Data" in casuais_save.columns:
         casuais_save["Data"] = casuais_save["Data"].astype(str)
     
-    # Sincroniza o que está na tela com o histórico global
     st.session_state.historico_fixos[mes_ano_chave] = st.session_state.gastos_fixos.to_dict("records")
     st.session_state.historico_casuais[mes_ano_chave] = casuais_save.to_dict("records")
 
@@ -71,24 +70,25 @@ def salvar_dados_nuvem():
     
     json_str = json.dumps(dados_completos)
     worksheet.update(values=[[json_str]], range_name='A1')
-    st.toast("💾 Tudo salvo na nuvem!", icon="✅")
+    st.toast("💾 Sincronizado!", icon="✅")
 
 def carregar_dados_sessao():
     mes_ano_chave = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
     
-    # Carregar Gastos Fixos
+    # --- CORREÇÃO GASTOS FIXOS ---
     if mes_ano_chave in st.session_state.historico_fixos:
         st.session_state.gastos_fixos = pd.DataFrame(st.session_state.historico_fixos[mes_ano_chave])
     else:
         if st.session_state.historico_fixos:
             ult_chave = list(st.session_state.historico_fixos.keys())[-1]
-            df_new = pd.DataFrame(st.session_state.historico_fixos[ult_chave])
-            if not df_new.empty: df_new["Pago"] = False
-            st.session_state.gastos_fixos = df_new
+            df_base = pd.DataFrame(st.session_state.historico_fixos[ult_chave])
+            df_base["Pago"] = False
+            st.session_state.gastos_fixos = df_base
         else:
-            st.session_state.gastos_fixos = pd.DataFrame([{"Descrição": "", "Valor (R$)": 0.0, "Pago": False}])
+            # Garante que as colunas existam mesmo se estiver vazio
+            st.session_state.gastos_fixos = pd.DataFrame(columns=["Descrição", "Valor (R$)", "Pago"])
 
-    # Carregar Gastos Casuais
+    # --- CORREÇÃO DIA A DIA ---
     if mes_ano_chave in st.session_state.historico_casuais:
         df_c = pd.DataFrame(st.session_state.historico_casuais[mes_ano_chave])
         if not df_c.empty:
@@ -96,7 +96,8 @@ def carregar_dados_sessao():
             if "Categoria" not in df_c.columns: df_c["Categoria"] = "Outros"
         st.session_state.gastos_casuais = df_c
     else:
-        st.session_state.gastos_casuais = pd.DataFrame([{"Data": datetime.now().date(), "Categoria": "Outros", "Descrição": "", "Valor (R$)": 0.0}])
+        # Garante o "esqueleto" da tabela para permitir adicionar linhas
+        st.session_state.gastos_casuais = pd.DataFrame(columns=["Data", "Categoria", "Descrição", "Valor (R$)"])
 
 # --- INICIALIZAÇÃO ---
 if "dados_carregados" not in st.session_state:
@@ -117,7 +118,7 @@ if "dados_carregados" not in st.session_state:
     carregar_dados_sessao()
     st.session_state.dados_carregados = True
 
-# --- LOGICA DE CÁLCULO ---
+# --- CÁLCULO PARCELAS ---
 def calcular_parcelas_v2(df, mes, ano):
     ativas, total = [], 0.0
     if df is None or df.empty: return pd.DataFrame(columns=["Descrição", "Parcela", "Valor (R$)"]), 0.0
@@ -143,12 +144,9 @@ with st.sidebar:
     if st.session_state.backup_anterior:
         if st.button("🔙 Desfazer Última Ação", use_container_width=True, type="primary"):
             b = st.session_state.backup_anterior
-            st.session_state.renda = b["renda"]
-            st.session_state.guias_extras = b["guias_extras"]
-            st.session_state.gastos_fixos = b["gastos_fixos"]
-            st.session_state.gastos_casuais = b["gastos_casuais"]
-            st.session_state.historico_fixos = b["historico_fixos"]
-            st.session_state.historico_casuais = b["historico_casuais"]
+            st.session_state.renda, st.session_state.guias_extras = b["renda"], b["guias_extras"]
+            st.session_state.gastos_fixos, st.session_state.gastos_casuais = b["gastos_fixos"], b["gastos_casuais"]
+            st.session_state.historico_fixos, st.session_state.historico_casuais = b["historico_fixos"], b["historico_casuais"]
             st.session_state.backup_anterior = None
             salvar_dados_nuvem()
             st.rerun()
@@ -175,14 +173,6 @@ with st.sidebar:
             st.session_state[f"dados_{n_g}"] = pd.DataFrame(columns=["Descrição", "Mês Início (1-12)", "Ano Início", "Qtd Parcelas", "Valor Parcela (R$)"])
             salvar_dados_nuvem()
             st.rerun()
-    
-    if st.session_state.guias_extras:
-        g_rem = st.selectbox("Apagar Guia:", st.session_state.guias_extras)
-        if st.button("🗑️ Remover"):
-            criar_ponto_restauracao()
-            st.session_state.guias_extras.remove(g_rem)
-            salvar_dados_nuvem()
-            st.rerun()
 
 # --- INTERFACE ---
 mes_n, ano_r = MESES[st.session_state.mes_atual], st.session_state.ano_atual
@@ -204,10 +194,13 @@ if sel == "Resumo Geral":
     c1, c2 = st.columns(2)
     c1.metric("Gasto Total", f"R$ {g_total:,.2f}")
     c2.metric("Sobra", f"R$ {sobra:,.2f}")
-    st.progress(min(int((g_total/st.session_state.renda)*100), 100) if st.session_state.renda > 0 else 0)
 
 elif sel == "Gastos Fixos":
     st.subheader("📌 Contas do Mês")
+    # Correção: Adição de linha se estiver vazio para destravar o celular
+    if st.session_state.gastos_fixos.empty:
+        st.session_state.gastos_fixos = pd.DataFrame([{"Descrição": "", "Valor (R$)": 0.0, "Pago": False}])
+    
     ed_f = st.data_editor(st.session_state.gastos_fixos, num_rows="dynamic", use_container_width=True, hide_index=True)
     if not ed_f.equals(st.session_state.gastos_fixos):
         criar_ponto_restauracao()
@@ -216,6 +209,10 @@ elif sel == "Gastos Fixos":
 
 elif sel == "Dia a Dia":
     st.subheader("🛍️ Compras Diárias")
+    # Correção: Adição de linha se estiver vazio para destravar o celular
+    if st.session_state.gastos_casuais.empty:
+        st.session_state.gastos_casuais = pd.DataFrame([{"Data": datetime.now().date(), "Categoria": "Outros", "Descrição": "", "Valor (R$)": 0.0}])
+    
     ed_c = st.data_editor(st.session_state.gastos_casuais, num_rows="dynamic", use_container_width=True, hide_index=True,
         column_config={
             "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY", default=datetime.now().date()),
@@ -236,7 +233,6 @@ else:
     st.subheader(f"Total no Mês: R$ {v_tot:,.2f}")
     if not df_res.empty: st.dataframe(df_res, use_container_width=True, hide_index=True)
     st.divider()
-    st.subheader("Base de Compras")
     ed_g = st.data_editor(st.session_state[f"dados_{sel}"], num_rows="dynamic", use_container_width=True, hide_index=True, key=f"ed_{sel}")
     if not ed_g.equals(st.session_state[f"dados_{sel}"]):
         criar_ponto_restauracao()

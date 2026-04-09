@@ -9,6 +9,7 @@ from fpdf import FPDF
 import unicodedata
 import tempfile
 import os
+import base64
 
 # --- 1. FUNÇÃO DE SEGURANÇA (LOGIN) ---
 def check_password():
@@ -157,7 +158,7 @@ if check_password():
             texto = str(texto)
         return unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')
 
-    # --- GERAR PDF (MÉTODO 100% SEGURO) ---
+    # --- GERAR PDF ---
     def gerar_pdf_mes(mes_nome, ano, renda_df, fixos_df, casuais_df, guias_dados, total_renda, t_fix, t_cas, t_gui, sobra, dados_categoria):
         pdf = FPDF()
         pdf.add_page()
@@ -313,7 +314,7 @@ if check_password():
                 total_renda_pdf = st.session_state.renda_detalhada["Valor (R$)"].sum()
                 sobra_pdf = total_renda_pdf - (t_fix_pdf + t_cas_pdf + total_guias_pdf)
 
-                # Gera o PDF via arquivo temporário (resolve o erro silencioso)
+                # Gera o PDF via arquivo temporário
                 pdf_bytes = gerar_pdf_mes(
                     st.session_state.mes_atual, st.session_state.ano_atual,
                     st.session_state.renda_detalhada,
@@ -328,16 +329,20 @@ if check_password():
                 st.session_state.pdf_nome = f"relatorio_{st.session_state.mes_atual}_{st.session_state.ano_atual}.pdf"
                 st.rerun()
 
-        # Exibe o botão de download apenas se o PDF já foi processado e está pronto
+        # Exibe o botão de download compatível com celular se o PDF estiver pronto
         if st.session_state.pdf_bytes is not None:
             st.success("✅ Arquivo pronto! Clique abaixo para salvar.")
-            st.download_button(
-                label="📥 Baixar PDF Agora",
-                data=st.session_state.pdf_bytes,
-                file_name=st.session_state.pdf_nome,
-                mime="application/pdf",
-                use_container_width=True
-            )
+            b64_pdf = base64.b64encode(st.session_state.pdf_bytes).decode('utf-8')
+            nome_arquivo = st.session_state.pdf_nome
+            html_botao = f"""
+                <a href="data:application/pdf;base64,{b64_pdf}" download="{nome_arquivo}" 
+                   style="display: block; text-align: center; padding: 10px; 
+                          background-color: #2e7b32; color: white; text-decoration: none; 
+                          border-radius: 8px; font-weight: bold; margin-top: 10px; margin-bottom: 10px;">
+                   📥 Baixar PDF Agora
+                </a>
+            """
+            st.markdown(html_botao, unsafe_allow_html=True)
 
         st.divider()
         ver_projecao = st.checkbox("📈 Ver Projeção Futura (6 meses)")

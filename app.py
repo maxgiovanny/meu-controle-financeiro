@@ -27,7 +27,7 @@ except Exception:
     st.error("Erro de conexão com a nuvem.")
     st.stop()
 
-# --- AUXILIARES ---
+# --- AUXILIARES (NÃO MEXIDOS) ---
 def obter_mes_anterior(mes_nome, ano_atual):
     lista = list(MESES.keys())
     idx = lista.index(mes_nome)
@@ -49,7 +49,7 @@ def salvar_dados_nuvem():
         if f"dados_{g}" in st.session_state: dados[f"dados_{g}"] = st.session_state[f"dados_{g}"].to_dict("records")
     
     worksheet.update(values=[[json.dumps(dados)]], range_name='A1')
-    st.toast("💾 Sincronizado!", icon="✅")
+    st.toast("💾 Tudo sincronizado na nuvem!", icon="✅")
 
 def carregar_dados_sessao(importar_do_anterior=False):
     chave_atual = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
@@ -112,12 +112,11 @@ def calc_parc(df, m, a):
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Configurações")
-    
     m_sel = st.selectbox("Mês:", list(MESES.keys()), index=list(MESES.keys()).index(st.session_state.mes_atual))
     a_sel = st.number_input("Ano:", 2024, 2030, st.session_state.ano_atual)
     
     if m_sel != st.session_state.mes_atual or a_sel != st.session_state.ano_atual:
-        salvar_dados_nuvem() # Salva o mês anterior antes de mudar
+        salvar_dados_nuvem()
         st.session_state.mes_atual, st.session_state.ano_atual = m_sel, a_sel
         carregar_dados_sessao()
         st.rerun()
@@ -142,10 +141,6 @@ with st.sidebar:
             if f"dados_{gf}" in st.session_state: del st.session_state[f"dados_{gf}"]
             salvar_dados_nuvem(); st.rerun()
 
-    st.divider()
-    if st.button("💾 Salvar Tudo Agora"):
-        salvar_dados_nuvem()
-
 # --- MAIN ---
 mes_n, ano_r = MESES[st.session_state.mes_atual], st.session_state.ano_atual
 t_fix = float(st.session_state.gastos_fixos["Valor (R$)"].sum()) if not st.session_state.gastos_fixos.empty else 0.0
@@ -168,23 +163,36 @@ elif sel == "Gastos Fixos":
         carregar_dados_sessao(importar_do_anterior=True)
         st.rerun()
     
-    df_f = st.session_state.gastos_fixos if not st.session_state.gastos_fixos.empty else pd.DataFrame(columns=["Descrição", "Valor (R$)", "Pago"])
+    df_f = st.session_state.gastos_fixos
     ef = st.data_editor(df_f, num_rows="dynamic", use_container_width=True, hide_index=True)
     st.session_state.gastos_fixos = ef
+    
+    st.divider()
+    if st.button("💾 Salvar Alterações", use_container_width=True):
+        salvar_dados_nuvem()
 
 elif sel == "Dia a Dia":
     st.subheader("🛍️ Compras")
-    df_c = st.session_state.gastos_casuais if not st.session_state.gastos_casuais.empty else pd.DataFrame(columns=["Data", "Categoria", "Descrição", "Valor (R$)"])
+    df_c = st.session_state.gastos_casuais
     ec = st.data_editor(df_c, num_rows="dynamic", use_container_width=True, hide_index=True,
         column_config={"Data": st.column_config.DateColumn(format="DD/MM/YYYY"), "Categoria": st.column_config.SelectboxColumn(options=CATEGORIAS)})
     st.session_state.gastos_casuais = ec
+    
     if not st.session_state.gastos_casuais.empty:
         st.divider(); st.dataframe(st.session_state.gastos_casuais.groupby("Categoria")["Valor (R$)"].sum().reset_index(), use_container_width=True, hide_index=True)
+    
+    st.divider()
+    if st.button("💾 Salvar Alterações", use_container_width=True):
+        salvar_dados_nuvem()
 
 else:
     dr, vt = calc_parc(st.session_state.get(f"dados_{sel}"), mes_n, ano_r)
     st.subheader(f"Total: R$ {vt:,.2f}")
     if not dr.empty: st.dataframe(dr, use_container_width=True, hide_index=True)
-    st.divider(); de = st.session_state[f"dados_{sel}"] if not st.session_state[f"dados_{sel}"].empty else pd.DataFrame(columns=["Descrição", "Valor Parcela (R$)", "Mês Início (1-12)", "Ano Início", "Qtd Parcelas"])
+    st.divider(); de = st.session_state[f"dados_{sel}"]
     eg = st.data_editor(de, num_rows="dynamic", use_container_width=True, hide_index=True)
     st.session_state[f"dados_{sel}"] = eg
+    
+    st.divider()
+    if st.button("💾 Salvar Alterações", use_container_width=True):
+        salvar_dados_nuvem()

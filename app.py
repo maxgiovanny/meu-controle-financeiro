@@ -157,7 +157,7 @@ if check_password():
             texto = str(texto)
         return unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')
 
-    # --- GERAR PDF COMPLETO ---
+    # --- GERAR PDF ---
     def gerar_pdf_mes(mes_nome, ano, renda_df, fixos_df, casuais_df, guias_dados, total_renda, t_fix, t_cas, t_gui, sobra, dados_categoria):
         pdf = FPDF()
         pdf.add_page()
@@ -316,7 +316,6 @@ if check_password():
                 st.success("✅ Arquivo pronto! Clique abaixo para salvar.")
 
         # --- DOWNLOAD DO PDF ---
-        # Passando os bytes puramente, sem o io.BytesIO() para evitar o unsupported_error
         if st.session_state.pdf_ready and st.session_state.pdf_data is not None:
             st.download_button(
                 label="📥 2. Baixar PDF Agora",
@@ -329,62 +328,128 @@ if check_password():
         st.divider()
         ver_projecao = st.checkbox("📈 Ver Projeção Futura (6 meses)")
 
+        # ========== NOVA SEÇÃO: GERENCIAMENTO AVANÇADO DE CATEGORIAS ==========
         st.divider()
-        st.subheader("🏷️ Categorias Personalizadas")
-        nova_cat = st.text_input("Nova categoria:")
-        if st.button("➕ Adicionar Categoria"):
-            if nova_cat and nova_cat not in get_categorias():
-                st.session_state.categorias_personalizadas.append(nova_cat)
-                salvar_dados_nuvem()
-                st.rerun()
-        if st.session_state.categorias_personalizadas:
-            cat_remover = st.selectbox("Remover categoria:", [""] + st.session_state.categorias_personalizadas)
-            if cat_remover and st.button("🗑️ Remover"):
-                st.session_state.categorias_personalizadas.remove(cat_remover)
-                salvar_dados_nuvem()
-                st.rerun()
+        st.subheader("🏷️ Gerenciar Categorias")
+        with st.expander("⚙️ Opções de categorias"):
+            # Adicionar nova categoria personalizada
+            nova_cat = st.text_input("Nova categoria:", key="nova_cat_input")
+            if st.button("➕ Adicionar", key="add_cat"):
+                if nova_cat and nova_cat not in get_categorias():
+                    st.session_state.categorias_personalizadas.append(nova_cat)
+                    salvar_dados_nuvem()
+                    st.rerun()
+                else:
+                    st.warning("Categoria já existe ou nome inválido.")
+            
+            # Se houver categorias personalizadas, oferece edição
+            if st.session_state.categorias_personalizadas:
+                st.markdown("---")
+                st.write("✏️ **Editar categorias personalizadas**")
+                cat_para_editar = st.selectbox(
+                    "Selecione a categoria:",
+                    st.session_state.categorias_personalizadas,
+                    key="cat_edit_select"
+                )
+                
+                # Renomear
+                novo_nome_cat = st.text_input("Novo nome:", key="novo_nome_cat")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✏️ Renomear", key="rename_cat"):
+                        if novo_nome_cat and novo_nome_cat not in get_categorias():
+                            antigo = cat_para_editar
+                            novo = novo_nome_cat
+                            # Atualiza lista
+                            idx = st.session_state.categorias_personalizadas.index(antigo)
+                            st.session_state.categorias_personalizadas[idx] = novo
+                            
+                            # Atualiza despesas casuais do mês atual
+                            if not st.session_state.gastos_casuais.empty:
+                                st.session_state.gastos_casuais.loc[
+                                    st.session_state.gastos_casuais["Categoria"] == antigo, "Categoria"
+                                ] = novo
+                            
+                            # Atualiza guias extras (parcelamentos)
+                            for guia in st.session_state.guias_extras:
+                                df_g = st.session_state[f"dados_{guia}"]
+                                if not df_g.empty and "Categoria" in df_g.columns:
+                                    df_g.loc[df_g["Categoria"] == antigo, "Categoria"] = novo
+                                    st.session_state[f"dados_{guia}"] = df_g
+                            
+                            salvar_dados_nuvem()
+                            st.success(f"Categoria '{antigo}' renomeada para '{novo}'.")
+                            st.rerun()
+                        else:
+                            st.warning("Nome inválido ou já existe.")
+                
+                # Apagar categoria
+                with col2:
+                    if st.button("🗑️ Apagar", key="delete_cat"):
+                        if cat_para_editar:
+                            # Remove da lista
+                            st.session_state.categorias_personalizadas.remove(cat_para_editar)
+                            # Substitui por "Outros" nos registros
+                            if not st.session_state.gastos_casuais.empty:
+                                st.session_state.gastos_casuais.loc[
+                                    st.session_state.gastos_casuais["Categoria"] == cat_para_editar, "Categoria"
+                                ] = "Outros"
+                            for guia in st.session_state.guias_extras:
+                                df_g = st.session_state[f"dados_{guia}"]
+                                if not df_g.empty and "Categoria" in df_g.columns:
+                                    df_g.loc[df_g["Categoria"] == cat_para_editar, "Categoria"] = "Outros"
+                                    st.session_state[f"dados_{guia}"] = df_g
+                            salvar_dados_nuvem()
+                            st.success(f"Categoria '{cat_para_editar}' removida. Gastos movidos para 'Outros'.")
+                            st.rerun()
+            else:
+                st.info("Nenhuma categoria personalizada. Adicione uma acima.")
+        # ========== FIM DA SEÇÃO DE CATEGORIAS ==========
 
         st.divider()
         st.subheader("🛠️ Gerenciar Guias")
         with st.expander("⚙️ Opções de gerenciamento"):
             ng = st.text_input("Nova Guia:")
-            if st.button("➕ Criar"):
+            if st.button("➕ Criar", key="add_guia"):
                 if ng and ng not in st.session_state.guias_extras:
                     st.session_state.guias_extras.append(ng)
                     st.session_state[f"dados_{ng}"] = pd.DataFrame(columns=["Descrição","Valor Parcela (R$)","Mês Início (1-12)","Ano Início","Qtd Parcelas","Categoria"])
                     salvar_dados_nuvem()
                     st.rerun()
             if st.session_state.guias_extras:
-                g_ativa = st.selectbox("Guia para editar:", st.session_state.guias_extras)
-                novo_nome = st.text_input("Renomear para:")
-                if st.button("📝 Renomear"):
-                    if novo_nome and novo_nome not in st.session_state.guias_extras:
-                        idx = st.session_state.guias_extras.index(g_ativa)
-                        st.session_state.guias_extras[idx] = novo_nome
-                        st.session_state[f"dados_{novo_nome}"] = st.session_state[f"dados_{g_ativa}"]
-                        del st.session_state[f"dados_{g_ativa}"]
+                g_ativa = st.selectbox("Guia para editar:", st.session_state.guias_extras, key="guia_edit")
+                novo_nome = st.text_input("Renomear para:", key="rename_guia")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("📝 Renomear", key="rename_guia_btn"):
+                        if novo_nome and novo_nome not in st.session_state.guias_extras:
+                            idx = st.session_state.guias_extras.index(g_ativa)
+                            st.session_state.guias_extras[idx] = novo_nome
+                            st.session_state[f"dados_{novo_nome}"] = st.session_state[f"dados_{g_ativa}"]
+                            del st.session_state[f"dados_{g_ativa}"]
+                            salvar_dados_nuvem()
+                            st.rerun()
+                with col2:
+                    if st.button("🗑️ Apagar", key="delete_guia"):
+                        st.session_state.guias_extras.remove(g_ativa)
+                        if f"dados_{g_ativa}" in st.session_state:
+                            del st.session_state[f"dados_{g_ativa}"]
                         salvar_dados_nuvem()
                         st.rerun()
-                if st.button("🗑️ Apagar"):
-                    st.session_state.guias_extras.remove(g_ativa)
-                    if f"dados_{g_ativa}" in st.session_state:
-                        del st.session_state[f"dados_{g_ativa}"]
-                    salvar_dados_nuvem()
-                    st.rerun()
 
                 st.markdown("---")
                 st.write("🔼 Reordenar Guias")
-                guia_mover = st.selectbox("Selecione a guia:", st.session_state.guias_extras, key="mover")
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("⬆️ Mover Cima"):
+                guia_mover = st.selectbox("Selecione a guia:", st.session_state.guias_extras, key="guia_mover")
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    if st.button("⬆️ Mover Cima", key="move_up"):
                         idx = st.session_state.guias_extras.index(guia_mover)
                         if idx>0:
                             st.session_state.guias_extras[idx], st.session_state.guias_extras[idx-1] = st.session_state.guias_extras[idx-1], st.session_state.guias_extras[idx]
                             salvar_dados_nuvem()
                             st.rerun()
-                with col2:
-                    if st.button("⬇️ Mover Baixo"):
+                with col_b:
+                    if st.button("⬇️ Mover Baixo", key="move_down"):
                         idx = st.session_state.guias_extras.index(guia_mover)
                         if idx < len(st.session_state.guias_extras)-1:
                             st.session_state.guias_extras[idx], st.session_state.guias_extras[idx+1] = st.session_state.guias_extras[idx+1], st.session_state.guias_extras[idx]

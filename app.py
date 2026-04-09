@@ -77,7 +77,7 @@ if check_password():
             "historico_casuais": st.session_state.historico_casuais,
             "categorias_personalizadas": st.session_state.categorias_personalizadas,
             "categorias_padrao": st.session_state.categorias_padrao,
-            "metas_orcamento": st.session_state.metas_orcamento # GUARDA AS METAS
+            "metas_orcamento": st.session_state.metas_orcamento
         }
         for g in st.session_state.guias_extras:
             if f"dados_{g}" in st.session_state:
@@ -451,6 +451,25 @@ if check_password():
                         salvar_dados_nuvem()
                         st.rerun()
 
+                st.markdown("---")
+                st.write("🔼 Reordenar Guias")
+                guia_mover = st.selectbox("Selecione a guia:", st.session_state.guias_extras, key="guia_mover")
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    if st.button("⬆️ Mover Cima", key="move_up"):
+                        idx = st.session_state.guias_extras.index(guia_mover)
+                        if idx>0:
+                            st.session_state.guias_extras[idx], st.session_state.guias_extras[idx-1] = st.session_state.guias_extras[idx-1], st.session_state.guias_extras[idx]
+                            salvar_dados_nuvem()
+                            st.rerun()
+                with col_b:
+                    if st.button("⬇️ Mover Baixo", key="move_down"):
+                        idx = st.session_state.guias_extras.index(guia_mover)
+                        if idx < len(st.session_state.guias_extras)-1:
+                            st.session_state.guias_extras[idx], st.session_state.guias_extras[idx+1] = st.session_state.guias_extras[idx+1], st.session_state.guias_extras[idx]
+                            salvar_dados_nuvem()
+                            st.rerun()
+
     # --- CÁLCULOS PRINCIPAIS ---
     mes_n = MESES[st.session_state.mes_atual]
     ano_r = st.session_state.ano_atual
@@ -476,7 +495,6 @@ if check_password():
 
     st.title(f"💰 {st.session_state.mes_atual} / {st.session_state.ano_atual}")
 
-    # --- ADICIONADAS AS NOVAS ABAS DE MENU ---
     opcoes = ["Resumo Geral", "Renda", "Gastos Fixos", "Dia a Dia", "Resumo das Guias", "Metas de Orçamento", "Pesquisa Global"] + st.session_state.guias_extras
     sel = st.selectbox("Navegação do App:", opcoes)
     st.divider()
@@ -491,7 +509,6 @@ if check_password():
         fig.update_layout(margin=dict(t=0,b=0,l=0,r=0), height=300)
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- NOVO: GRÁFICO HISTÓRICO DE TENDÊNCIAS ---
         st.divider()
         st.subheader("📈 Evolução Financeira Anual")
         historico_df_dados = []
@@ -550,7 +567,6 @@ if check_password():
             salvar_dados_nuvem()
             st.rerun()
 
-        # --- NOVO: FORMULÁRIO DE LANÇAMENTO RÁPIDO ---
         with st.expander("➕ Lançamento Rápido de Fixos", expanded=False):
             with st.form("form_novo_fixo"):
                 c1, c2, c3 = st.columns([2, 1, 1])
@@ -584,7 +600,6 @@ if check_password():
     elif sel == "Dia a Dia":
         st.subheader("🛍️ Compras Casuais")
 
-        # --- NOVO: FORMULÁRIO DE LANÇAMENTO RÁPIDO ---
         with st.expander("➕ Lançamento Rápido do Dia a Dia", expanded=False):
             with st.form("form_novo_casual"):
                 c1, c2 = st.columns(2)
@@ -609,7 +624,6 @@ if check_password():
             st.session_state.gastos_casuais = ec
             salvar_dados_nuvem()
 
-    # --- NOVO: METAS DE ORÇAMENTO ---
     elif sel == "Metas de Orçamento":
         st.subheader("🎯 Metas e Limites Mensais")
         st.write("Defina um orçamento para cada categoria e garanta que não ultrapassa o planeado.")
@@ -625,7 +639,6 @@ if check_password():
                     st.rerun()
 
         st.markdown("---")
-        # Mostrar Barras de Progresso
         metas_ativas = st.session_state.metas_orcamento
         if not metas_ativas:
             st.info("Nenhuma meta definida. Use o menu acima para criar o seu primeiro orçamento.")
@@ -640,7 +653,6 @@ if check_password():
                 if perc >= 1.0:
                     st.error(f"⚠️ Atenção! O orçamento de {cat} foi ultrapassado em R$ {gasto_atual - limite:.2f}.")
 
-    # --- NOVO: PESQUISA GLOBAL ---
     elif sel == "Pesquisa Global":
         st.subheader("🔍 Procurar no Histórico")
         termo = st.text_input("Escreva uma palavra (Ex: Colchão, Amazon, Combustível, Médico):").strip().lower()
@@ -648,19 +660,16 @@ if check_password():
         if termo:
             resultados = []
             
-            # Varre Fixos
             for chave, df_list in st.session_state.historico_fixos.items():
                 for row in df_list:
                     if termo in str(row.get('Descrição','')).lower() or termo in str(row.get('Categoria','')).lower():
                         resultados.append({"Referência": chave, "Tipo": "Despesa Fixa", "Data": "-", "Categoria": row.get('Categoria',''), "Descrição": row.get('Descrição',''), "Valor": f"R$ {row.get('Valor (R$)',0):.2f}"})
                         
-            # Varre Casuais
             for chave, df_list in st.session_state.historico_casuais.items():
                 for row in df_list:
                     if termo in str(row.get('Descrição','')).lower() or termo in str(row.get('Categoria','')).lower():
                         resultados.append({"Referência": chave, "Tipo": "Dia a Dia", "Data": row.get('Data','-'), "Categoria": row.get('Categoria',''), "Descrição": row.get('Descrição',''), "Valor": f"R$ {row.get('Valor (R$)',0):.2f}"})
             
-            # Varre Guias/Cartões
             for g in st.session_state.guias_extras:
                 df_g = st.session_state.get(f"dados_{g}")
                 if df_g is not None and not df_g.empty:
@@ -701,12 +710,43 @@ if check_password():
         else:
             st.info("Nenhum gasto registado neste mês.")
 
-    else:  # Guias extras individuais
+    else:  # --- ABAS INDIVIDUAIS DAS GUIAS EXTRAS ---
         df_parc, total_parc, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{sel}"), mes_n, ano_r)
         st.subheader(f"Total no Mês: R$ {total_parc:,.2f}")
         if not df_parc.empty:
             st.dataframe(df_parc, use_container_width=True, hide_index=True)
         st.divider()
+        
+        # --- NOVO: FORMULÁRIO DE LANÇAMENTO RÁPIDO PARA AS GUIAS ---
+        with st.expander(f"➕ Novo Lançamento em {sel}", expanded=False):
+            with st.form(f"form_nova_guia_{sel}"):
+                c1, c2 = st.columns(2)
+                n_desc = c1.text_input("Descrição da Compra")
+                n_cat = c2.selectbox("Categoria", get_categorias())
+                
+                c3, c4, c5, c6 = st.columns(4)
+                n_val = c3.number_input("Valor Parcela (R$)", min_value=0.0, format="%.2f")
+                n_qtd = c4.number_input("Qtd Parcelas", min_value=1, step=1, value=1)
+                n_mes_ini = c5.number_input("Mês Início", min_value=1, max_value=12, step=1, value=mes_n)
+                n_ano_ini = c6.number_input("Ano Início", min_value=2000, max_value=2050, step=1, value=ano_r)
+                
+                if st.form_submit_button("Guardar Lançamento"):
+                    if n_desc:
+                        nova_linha = pd.DataFrame([{
+                            "Descrição": n_desc, 
+                            "Valor Parcela (R$)": n_val, 
+                            "Mês Início (1-12)": n_mes_ini,
+                            "Ano Início": n_ano_ini,
+                            "Qtd Parcelas": n_qtd,
+                            "Categoria": n_cat
+                        }])
+                        st.session_state[f"dados_{sel}"] = pd.concat([st.session_state[f"dados_{sel}"], nova_linha], ignore_index=True)
+                        salvar_dados_nuvem()
+                        st.success("Lançamento adicionado com sucesso!")
+                        st.rerun()
+                    else:
+                        st.warning("Por favor, preencha a descrição.")
+
         st.write("**Base de Lançamentos (parcelas):**")
         de = st.data_editor(st.session_state[f"dados_{sel}"], num_rows="dynamic", use_container_width=True, hide_index=True,
                             column_config={
@@ -720,4 +760,3 @@ if check_password():
             st.session_state[f"dados_{sel}"] = de
             salvar_dados_nuvem()
             st.rerun()
-

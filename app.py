@@ -80,9 +80,14 @@ if check_password():
 
         st.session_state.historico_fixos[chave] = st.session_state.gastos_fixos.to_dict("records")
         st.session_state.historico_casuais[chave] = casuais_save.to_dict("records")
+        
+        # --- Salvar renda por mês ---
+        if "renda_por_mes" not in st.session_state:
+            st.session_state.renda_por_mes = {}
+        st.session_state.renda_por_mes[chave] = st.session_state.renda_detalhada.to_dict("records")
 
         dados = {
-            "renda_detalhada": st.session_state.renda_detalhada.to_dict("records"),
+            "renda_por_mes": st.session_state.renda_por_mes,
             "guias_extras": st.session_state.guias_extras,
             "historico_fixos": st.session_state.historico_fixos,
             "historico_casuais": st.session_state.historico_casuais
@@ -122,6 +127,20 @@ if check_password():
             df_c["Data"] = pd.to_datetime(df_c["Data"]).dt.date
         st.session_state.gastos_casuais = df_c if not df_c.empty else pd.DataFrame(columns=["Data", "Categoria", "Descrição", "Valor (R$)"])
 
+        # --- Carregar renda do mês atual ---
+        if "renda_por_mes" in st.session_state:
+            renda_data = st.session_state.renda_por_mes.get(chave_atual)
+            if renda_data:
+                st.session_state.renda_detalhada = pd.DataFrame(renda_data)
+            else:
+                st.session_state.renda_detalhada = pd.DataFrame([{"Fonte": "Salário", "Valor (R$)": 0.0}])
+        else:
+            # Fallback para estrutura antiga (global)
+            if "renda_detalhada" in st.session_state:
+                st.session_state.renda_detalhada = st.session_state.renda_detalhada
+            else:
+                st.session_state.renda_detalhada = pd.DataFrame([{"Fonte": "Salário", "Valor (R$)": 0.0}])
+
     def recalcular_media_casuais(anos_meses):
         valores = []
         for ano, mes in anos_meses:
@@ -138,16 +157,21 @@ if check_password():
         hj = datetime.now()
         st.session_state.ano_atual, st.session_state.mes_atual = hj.year, list(MESES.keys())[hj.month - 1]
 
-        if "renda_detalhada" not in dados_raw and "renda" in dados_raw:
-            st.session_state.renda_detalhada = pd.DataFrame([{"Fonte": "Salário", "Valor (R$)": dados_raw["renda"]}])
-        else:
-            st.session_state.renda_detalhada = pd.DataFrame(dados_raw.get("renda_detalhada", [{"Fonte": "Salário", "Valor (R$)": 10000.0}]))
-
+        # Carregar estruturas principais
         st.session_state.guias_extras = dados_raw.get("guias_extras", [])
         st.session_state.historico_fixos = dados_raw.get("historico_fixos", {})
         st.session_state.historico_casuais = dados_raw.get("historico_casuais", {})
+        st.session_state.renda_por_mes = dados_raw.get("renda_por_mes", {})
+        
+        # Se existia renda global antiga, migrar para o mês atual
+        if "renda_detalhada" in dados_raw and "renda_por_mes" not in dados_raw:
+            renda_antiga = dados_raw["renda_detalhada"]
+            chave_atual = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
+            st.session_state.renda_por_mes[chave_atual] = renda_antiga
+        
         for g in st.session_state.guias_extras:
             st.session_state[f"dados_{g}"] = pd.DataFrame(dados_raw.get(f"dados_{g}", []))
+        
         carregar_dados_sessao()
         st.session_state.dados_carregados = True
 
@@ -171,10 +195,10 @@ if check_password():
         st.header("⚙️ Configurações")
         if st.button("🔄 Recarregar Nuvem"):
             novos_dados = carregar_dados_nuvem_raw()
-            st.session_state.renda_detalhada = pd.DataFrame(novos_dados.get("renda_detalhada", [{"Fonte": "Salário", "Valor (R$)": 10000.0}]))
             st.session_state.guias_extras = novos_dados.get("guias_extras", [])
             st.session_state.historico_fixos = novos_dados.get("historico_fixos", {})
             st.session_state.historico_casuais = novos_dados.get("historico_casuais", {})
+            st.session_state.renda_por_mes = novos_dados.get("renda_por_mes", {})
             for g in st.session_state.guias_extras:
                 st.session_state[f"dados_{g}"] = pd.DataFrame(novos_dados.get(f"dados_{g}", []))
             carregar_dados_sessao()
@@ -220,7 +244,7 @@ if check_password():
                     salvar_dados_nuvem()
                     st.rerun()
 
-                # --- NOVA FUNÇÃO: REORGANIZAR ORDEM DAS GUIAS ---
+                # Reordenar guias
                 st.markdown("---")
                 st.write("🔼 **Reordenar Guias**")
                 guia_mover = st.selectbox("Selecione a guia para mover:", st.session_state.guias_extras, key="mover_guia")
@@ -229,7 +253,6 @@ if check_password():
                     if st.button("⬆️ Mover para Cima"):
                         idx = st.session_state.guias_extras.index(guia_mover)
                         if idx > 0:
-                            # Troca de posição com o elemento anterior
                             st.session_state.guias_extras[idx], st.session_state.guias_extras[idx-1] = st.session_state.guias_extras[idx-1], st.session_state.guias_extras[idx]
                             salvar_dados_nuvem()
                             st.rerun()
@@ -311,10 +334,12 @@ if check_password():
         dados_guias = [{"Guia": g, "Custo Total (R$)": calc_parc(st.session_state.get(f"dados_{g}"), mes_n, ano_r)[1]} for g in st.session_state.guias_extras]
         if dados_guias:
             df_guias = pd.DataFrame(dados_guias)
+            # Total Geral movido para o topo
+            total_geral = df_guias['Custo Total (R$)'].sum()
+            st.metric("💰 Total Geral de Todas as Guias", f"R$ {total_geral:,.2f}")
             st.dataframe(df_guias, use_container_width=True, hide_index=True)
             fig_guias = px.bar(df_guias, x="Guia", y="Custo Total (R$)", color="Guia", text_auto='.2f')
             st.plotly_chart(fig_guias, use_container_width=True)
-            st.metric("💰 Total Geral de Todas as Guias", f"R$ {df_guias['Custo Total (R$)'].sum():,.2f}")
         else:
             st.info("Nenhuma guia extra criada.")
 

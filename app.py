@@ -137,3 +137,63 @@ with st.sidebar:
     st.divider(); st.subheader("🛠️ Gerenciar Guias")
     ng = st.text_input("Nova Guia:")
     if st.button("➕ Criar"):
+        if ng and ng not in st.session_state.guias_extras:
+            criar_ponto_restauracao(); st.session_state.guias_extras.append(ng)
+            st.session_state[f"dados_{ng}"] = pd.DataFrame(columns=["Descrição", "Valor Parcela (R$)", "Mês Início (1-12)", "Ano Início", "Qtd Parcelas"])
+            salvar_dados_nuvem(); st.rerun()
+
+    if st.session_state.guias_extras:
+        gf = st.selectbox("Guia Ativa:", st.session_state.guias_extras)
+        nn = st.text_input("Novo Nome:")
+        if st.button("📝 Renomear"):
+            if nn and nn not in st.session_state.guias_extras:
+                criar_ponto_restauracao(); idx = st.session_state.guias_extras.index(gf)
+                st.session_state.guias_extras[idx] = nn
+                st.session_state[f"dados_{nn}"] = st.session_state[f"dados_{gf}"]
+                del st.session_state[f"dados_{gf}"]; salvar_dados_nuvem(); st.rerun()
+        if st.button("🗑️ Apagar"):
+            criar_ponto_restauracao(); st.session_state.guias_extras.remove(gf)
+            if f"dados_{gf}" in st.session_state: del st.session_state[f"dados_{gf}"]
+            salvar_dados_nuvem(); st.rerun()
+
+# --- MAIN ---
+mes_n, ano_r = MESES[st.session_state.mes_atual], st.session_state.ano_atual
+t_fix = float(st.session_state.gastos_fixos["Valor (R$)"].sum()) if not st.session_state.gastos_fixos.empty else 0.0
+t_cas = float(st.session_state.gastos_casuais["Valor (R$)"].sum()) if not st.session_state.gastos_casuais.empty else 0.0
+t_gui = sum([calc_parc(st.session_state.get(f"dados_{g}"), mes_n, ano_r)[1] for g in st.session_state.guias_extras])
+
+st.title(f"💰 {st.session_state.mes_atual} / {ano_r}")
+sel = st.selectbox("Ir para:", ["Resumo Geral", "Gastos Fixos", "Dia a Dia"] + st.session_state.guias_extras)
+st.divider()
+
+if sel == "Resumo Geral":
+    gt = t_fix + t_cas + t_gui; sobra = max(0.0, st.session_state.renda - gt)
+    fig = px.pie(pd.DataFrame({"C": ["Fixos", "Dia a Dia", "Guias", "Sobra"], "V": [t_fix, t_cas, t_gui, sobra]}), values='V', names='C', hole=.4)
+    fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300); st.plotly_chart(fig, use_container_width=True)
+    c1, c2 = st.columns(2); c1.metric("Gasto Total", f"R$ {gt:,.2f}"); c2.metric("Sobra", f"R$ {sobra:,.2f}")
+
+elif sel == "Gastos Fixos":
+    ct, cb = st.columns([3, 1]); ct.subheader("📌 Contas"); 
+    if cb.button("🔄 Importar"): carregar_dados_sessao(manual=True); salvar_dados_nuvem(); st.rerun()
+    
+    # Garantir linha para edição
+    df_f = st.session_state.gastos_fixos
+    if df_f.empty: df_f = pd.DataFrame([{"Descrição": "", "Valor (R$)": 0.0, "Pago": False}])
+    ef = st.data_editor(df_f, num_rows="dynamic", use_container_width=True, hide_index=True)
+    if not ef.equals(st.session_state.gastos_fixos): st.session_state.gastos_fixos = ef; salvar_dados_nuvem()
+
+elif sel == "Dia a Dia":
+    st.subheader("🛍️ Compras"); df_c = st.session_state.gastos_casuais
+    if df_c.empty: df_c = pd.DataFrame([{"Data": datetime.now().date(), "Categoria": "Outros", "Descrição": "", "Valor (R$)": 0.0}])
+    ec = st.data_editor(df_c, num_rows="dynamic", use_container_width=True, hide_index=True,
+        column_config={"Data": st.column_config.DateColumn(format="DD/MM/YYYY"), "Categoria": st.column_config.SelectboxColumn(options=CATEGORIAS)})
+    if not ec.equals(st.session_state.gastos_casuais): st.session_state.gastos_casuais = ec; salvar_dados_nuvem()
+
+else:
+    dr, vt = calc_parc(st.session_state.get(f"dados_{sel}"), mes_n, ano_r)
+    st.subheader(f"Total: R$ {vt:,.2f}")
+    if not dr.empty: st.dataframe(dr, use_container_width=True, hide_index=True)
+    st.divider(); de = st.session_state[f"dados_{sel}"]
+    if de.empty: de = pd.DataFrame([{"Descrição": "", "Valor Parcela (R$)": 0.0, "Mês Início (1-12)": 1, "Ano Início": 2026, "Qtd Parcelas": 1}])
+    eg = st.data_editor(de, num_rows="dynamic", use_container_width=True, hide_index=True, key=f"ed_{sel}")
+    if not eg.equals(st.session_state[f"dados_{sel}"]): st.session_state[f"dados_{sel}"] = eg; salvar_dados_nuvem(); st.rerun()

@@ -34,23 +34,18 @@ except Exception:
 
 # --- FUNÇÕES DE BACKUP E SALVAMENTO ---
 def salvar_dados_nuvem():
-    # Preparamos os dados mensais para salvar
     mes_ano_chave = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
-    
-    # Tratamento de data para gastos casuais
     casuais_dict = st.session_state.gastos_casuais.copy()
     if "Data" in casuais_dict.columns:
         casuais_dict["Data"] = casuais_dict["Data"].astype(str)
     
-    # Estrutura do JSON
     dados_completos = {
         "renda": st.session_state.renda,
         "guias_extras": st.session_state.guias_extras,
-        "historico_fixos": st.session_state.historico_fixos, # Aqui moram os meses independentes
+        "historico_fixos": st.session_state.historico_fixos,
         "historico_casuais": st.session_state.historico_casuais
     }
     
-    # Salva o estado ATUAL do mês selecionado nos históricos
     dados_completos["historico_fixos"][mes_ano_chave] = st.session_state.gastos_fixos.to_dict("records")
     dados_completos["historico_casuais"][mes_ano_chave] = casuais_dict.to_dict("records")
 
@@ -65,23 +60,28 @@ def salvar_dados_nuvem():
 def carregar_dados_sessao():
     mes_ano_chave = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
     
-    # 1. Carregar Gastos Fixos do Mês
+    # 1. Gastos Fixos
     if mes_ano_chave in st.session_state.historico_fixos:
         st.session_state.gastos_fixos = pd.DataFrame(st.session_state.historico_fixos[mes_ano_chave])
     else:
-        # Se é um mês novo, pegamos a lista do mês anterior (se existir) mas resetamos o "Pago"
         if st.session_state.historico_fixos:
-            ultima_lista = list(st.session_state.historico_fixos.values())[-1]
-            df_novo = pd.DataFrame(ultima_lista)
-            df_novo["Pago"] = False # Reseta o check
+            ultima_chave = list(st.session_state.historico_fixos.keys())[-1]
+            df_novo = pd.DataFrame(st.session_state.historico_fixos[ultima_chave])
+            df_novo["Pago"] = False
             st.session_state.gastos_fixos = df_novo
         else:
             st.session_state.gastos_fixos = pd.DataFrame(columns=["Descrição", "Valor (R$)", "Pago"])
 
-    # 2. Carregar Gastos Casuais do Mês
+    # 2. Gastos Casuais (COM TRAVA DE SEGURANÇA)
     if mes_ano_chave in st.session_state.historico_casuais:
         df_c = pd.DataFrame(st.session_state.historico_casuais[mes_ano_chave])
-        df_c["Data"] = pd.to_datetime(df_c["Data"]).dt.date
+        if not df_c.empty:
+            if "Data" in df_c.columns:
+                df_c["Data"] = pd.to_datetime(df_c["Data"]).dt.date
+            else:
+                df_c["Data"] = datetime.now().date()
+            if "Categoria" not in df_c.columns:
+                df_c["Categoria"] = "Outros"
         st.session_state.gastos_casuais = df_c
     else:
         st.session_state.gastos_casuais = pd.DataFrame(columns=["Data", "Categoria", "Descrição", "Valor (R$)"])
@@ -98,17 +98,16 @@ if "dados_carregados" not in st.session_state:
     st.session_state.historico_fixos = dados.get("historico_fixos", {})
     st.session_state.historico_casuais = dados.get("historico_casuais", {})
     
-    # Carrega as guias extras de cartões
     for guia in st.session_state.guias_extras:
         st.session_state[f"dados_{guia}"] = pd.DataFrame(dados.get(f"dados_{guia}", []))
     
     carregar_dados_sessao()
     st.session_state.dados_carregados = True
 
-# --- LÓGICA DE CÁLCULO ---
+# --- LOGICA DE CÁLCULO ---
 def calcular_parcelas_v2(df, mes_alvo, ano_alvo):
     ativas, total_valor = [], 0.0
-    if df.empty: return pd.DataFrame(columns=["Descrição", "Parcela", "Valor (R$)"]), 0.0
+    if df is None or df.empty: return pd.DataFrame(columns=["Descrição", "Parcela", "Valor (R$)"]), 0.0
     for _, row in df.iterrows():
         try:
             desc = row.get("Descrição")
@@ -127,12 +126,9 @@ def calcular_parcelas_v2(df, mes_alvo, ano_alvo):
 # --- MENU LATERAL ---
 with st.sidebar:
     st.header("⚙️ Ajustes")
-    
     novo_mes = st.selectbox("Mês:", list(MESES.keys()), index=list(MESES.keys()).index(st.session_state.mes_atual))
     novo_ano = st.number_input("Ano:", min_value=2024, max_value=2030, value=st.session_state.ano_atual)
-    
     if novo_mes != st.session_state.mes_atual or novo_ano != st.session_state.ano_atual:
-        # Antes de mudar, salva o que está na tela
         salvar_dados_nuvem()
         st.session_state.mes_atual, st.session_state.ano_atual = novo_mes, novo_ano
         carregar_dados_sessao()
@@ -156,7 +152,7 @@ with st.sidebar:
 mes_num, ano_ref = MESES[st.session_state.mes_atual], st.session_state.ano_atual
 t_fixos = st.session_state.gastos_fixos["Valor (R$)"].sum() if not st.session_state.gastos_fixos.empty else 0.0
 t_casuais = st.session_state.gastos_casuais["Valor (R$)"].sum() if not st.session_state.gastos_casuais.empty else 0.0
-t_guias = sum([calcular_parcelas_v2(st.session_state[f"dados_{g}"], mes_num, ano_ref)[1] for g in st.session_state.guias_extras])
+t_guias = sum([calcular_parcelas_v2(st.session_state.get(f"dados_{g}"), mes_num, ano_ref)[1] for g in st.session_state.guias_extras])
 
 st.title(f"💰 {st.session_state.mes_atual} / {ano_ref}")
 sel = st.selectbox("Ir para:", ["Resumo", "Fixos", "Dia a Dia"] + st.session_state.guias_extras)
@@ -164,40 +160,4 @@ sel = st.selectbox("Ir para:", ["Resumo", "Fixos", "Dia a Dia"] + st.session_sta
 if sel == "Resumo":
     gasto_total = t_fixos + t_casuais + t_guias
     sobra = max(0.0, st.session_state.renda - gasto_total)
-    df_grafico = pd.DataFrame({"Cat": ["Fixos", "Dia a Dia", "Guias", "Sobra"], "Val": [t_fixos, t_casuais, t_guias, sobra]})
-    fig = px.pie(df_grafico, values='Val', names='Cat', hole=.4, color_discrete_sequence=px.colors.qualitative.Pastel)
-    fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300)
-    st.plotly_chart(fig, use_container_width=True)
-    c1, c2 = st.columns(2)
-    c1.metric("Gasto Total", f"R$ {gasto_total:,.2f}")
-    c2.metric("Sobra", f"R$ {sobra:,.2f}")
-
-elif sel == "Fixos":
-    st.header("Gastos Fixos")
-    ed_f = st.data_editor(st.session_state.gastos_fixos, num_rows="dynamic", use_container_width=True, hide_index=True)
-    if not ed_f.equals(st.session_state.gastos_fixos):
-        st.session_state.gastos_fixos = ed_f
-        salvar_dados_nuvem()
-
-elif sel == "Dia a Dia":
-    st.header("Gastos Diários")
-    ed_c = st.data_editor(st.session_state.gastos_casuais, num_rows="dynamic", use_container_width=True, hide_index=True,
-        column_config={
-            "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY", default=datetime.now().date()),
-            "Categoria": st.column_config.SelectboxColumn("Categoria", options=CATEGORIAS, default="Outros"),
-            "Valor (R$)": st.column_config.NumberColumn("Valor (R$)", format="%.2f")
-        })
-    if not ed_c.equals(st.session_state.gastos_casuais):
-        st.session_state.gastos_casuais = ed_c
-        salvar_dados_nuvem()
-
-else:
-    df_res, v_tot = calcular_parcelas_v2(st.session_state[f"dados_{sel}"], mes_num, ano_ref)
-    st.subheader(f"Total no Mês: R$ {v_tot:,.2f}")
-    if not df_res.empty: st.dataframe(df_res, use_container_width=True, hide_index=True)
-    st.divider()
-    ed_g = st.data_editor(st.session_state[f"dados_{sel}"], num_rows="dynamic", use_container_width=True, hide_index=True, key=f"ed_{sel}")
-    if not ed_g.equals(st.session_state[f"dados_{sel}"]):
-        st.session_state[f"dados_{sel}"] = ed_g
-        salvar_dados_nuvem()
-        st.rerun()
+    df_grafico = pd.DataFrame({"Cat": ["Fixos", "Dia a Dia", "Guias", "Sobra"], "Val": [t_fixos, t

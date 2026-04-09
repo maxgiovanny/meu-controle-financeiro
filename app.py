@@ -53,6 +53,7 @@ def salvar_dados_nuvem():
     if "Data" in casuais_save.columns:
         casuais_save["Data"] = casuais_save["Data"].astype(str)
     
+    # Sincroniza estado atual no histórico antes de subir para nuvem
     st.session_state.historico_fixos[mes_ano_chave] = st.session_state.gastos_fixos.to_dict("records")
     st.session_state.historico_casuais[mes_ano_chave] = casuais_save.to_dict("records")
 
@@ -73,20 +74,25 @@ def salvar_dados_nuvem():
 def carregar_dados_sessao():
     mes_ano_chave = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
     
-    # 1. Gastos Fixos (Tenta carregar o mês atual)
+    # 1. Gastos Fixos - Lógica de Importação Reforçada
     if mes_ano_chave in st.session_state.historico_fixos and len(st.session_state.historico_fixos[mes_ano_chave]) > 0:
         st.session_state.gastos_fixos = pd.DataFrame(st.session_state.historico_fixos[mes_ano_chave])
     else:
-        # Se estiver vazio, busca o último registro de qualquer mês anterior
+        # Busca recursiva pelo último mês que tenha dados
+        df_encontrado = None
         if st.session_state.historico_fixos:
-            chaves = list(st.session_state.historico_fixos.keys())
-            ult_chave = chaves[-1]
-            df_base = pd.DataFrame(st.session_state.historico_fixos[ult_chave])
-            if not df_base.empty:
-                df_base["Pago"] = False
-                st.session_state.gastos_fixos = df_base
-            else:
-                st.session_state.gastos_fixos = pd.DataFrame(columns=["Descrição", "Valor (R$)", "Pago"])
+            # Ordena as chaves para garantir que pegamos o registro mais recente disponível
+            todas_chaves = list(st.session_state.historico_fixos.keys())
+            for chave in reversed(todas_chaves):
+                if len(st.session_state.historico_fixos[chave]) > 0:
+                    df_base = pd.DataFrame(st.session_state.historico_fixos[chave])
+                    if "Pago" in df_base.columns:
+                        df_base["Pago"] = False
+                    df_encontrado = df_base
+                    break
+        
+        if df_encontrado is not None:
+            st.session_state.gastos_fixos = df_encontrado
         else:
             st.session_state.gastos_fixos = pd.DataFrame(columns=["Descrição", "Valor (R$)", "Pago"])
 
@@ -199,7 +205,7 @@ t_cas = st.session_state.gastos_casuais["Valor (R$)"].sum() if not st.session_st
 t_gui = sum([calcular_parcelas_v2(st.session_state.get(f"dados_{g}"), mes_n, ano_r)[1] for g in st.session_state.guias_extras])
 
 st.title(f"💰 {st.session_state.mes_atual} / {ano_r}")
-sel = st.selectbox("Ir para:", ["Resumo Geral", "Gastos Fixos", "Dia a Dia"] + st.session_state.guias_extras)
+sel = st.selectbox("Navegar para:", ["Resumo Geral", "Gastos Fixos", "Dia a Dia"] + st.session_state.guias_extras)
 st.divider()
 
 if sel == "Resumo Geral":
@@ -216,9 +222,15 @@ if sel == "Resumo Geral":
 elif sel == "Gastos Fixos":
     col_t, col_b = st.columns([3, 1])
     col_t.subheader("📌 Contas do Mês")
+    
+    # Botão de Importar com Lógica Forçada
     if col_b.button("🔄 Importar"):
-        st.session_state.historico_fixos.pop(f"{st.session_state.mes_atual}_{st.session_state.ano_atual}", None)
+        mes_chave_atual = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
+        # Remove o registro do mês atual da memória para forçar a busca no passado
+        if mes_chave_atual in st.session_state.historico_fixos:
+            del st.session_state.historico_fixos[mes_chave_atual]
         carregar_dados_sessao()
+        salvar_dados_nuvem() # Salva o resultado da importação imediatamente
         st.rerun()
         
     ed_f = st.data_editor(st.session_state.gastos_fixos, num_rows="dynamic", use_container_width=True, hide_index=True)

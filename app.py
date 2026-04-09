@@ -7,8 +7,7 @@ from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 from fpdf import FPDF
 import base64
-import urllib.request
-import os
+import unicodedata
 
 # --- 1. FUNÇÃO DE SEGURANÇA (LOGIN) ---
 def check_password():
@@ -158,102 +157,70 @@ if check_password():
         soma_cat = df_parc.groupby("Categoria")["Valor (R$)"].sum().to_dict() if not df_parc.empty else {}
         return df_parc, total, soma_cat
 
-    # --- FUNÇÃO PARA GERAR PDF COM DOWNLOAD DE FONTE ---
-    def baixar_fonte_se_necessario():
-        fonte_url = "https://github.com/dejavu-fonts/dejavu-fonts/raw/master/ttf/DejaVuSansCondensed.ttf"
-        fonte_path = "DejaVuSansCondensed.ttf"
-        if not os.path.exists(fonte_path):
-            try:
-                urllib.request.urlretrieve(fonte_url, fonte_path)
-                return fonte_path
-            except:
-                return None
-        return fonte_path
+    # --- FUNÇÃO PARA REMOVER ACENTOS E CARACTERES ESPECIAIS ---
+    def remover_acentos(texto):
+        if not isinstance(texto, str):
+            texto = str(texto)
+        # Normalizar e remover acentos
+        texto = unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')
+        # Substituir alguns caracteres problemáticos
+        texto = texto.replace('€', 'EUR').replace('$', 'USD').replace('R$', 'R$')
+        return texto
 
+    # --- FUNÇÃO PARA GERAR PDF (SEM UNICODE, COM SUBSTITUIÇÃO) ---
     def gerar_pdf_mes(mes_nome, ano, renda_df, fixos_df, casuais_df, guias_extras, total_renda, t_fix, t_cas, t_gui, sobra, dados_categoria):
         pdf = FPDF()
         pdf.add_page()
-        
-        # Tentar usar fonte DejaVu com download automático
-        fonte_path = baixar_fonte_se_necessario()
-        if fonte_path:
-            try:
-                pdf.add_font('DejaVu', '', fonte_path, uni=True)
-                pdf.set_font('DejaVu', '', 12)
-                usa_unicode = True
-            except:
-                usa_unicode = False
-        else:
-            usa_unicode = False
-        
-        if not usa_unicode:
-            # Fallback: fonte helvetica e substituição de caracteres
-            pdf.set_font('helvetica', '', 12)
-        
-        def safe_text(txt):
-            if usa_unicode:
-                return txt
-            # Substituir caracteres acentuados por versões simples
-            substituicoes = {
-                'á': 'a', 'à': 'a', 'ã': 'a', 'â': 'a', 'ä': 'a',
-                'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e',
-                'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i',
-                'ó': 'o', 'ò': 'o', 'õ': 'o', 'ô': 'o', 'ö': 'o',
-                'ú': 'u', 'ù': 'u', 'û': 'u', 'ü': 'u',
-                'ç': 'c', 'Ç': 'C', 'ñ': 'n'
-            }
-            for acento, simples in substituicoes.items():
-                txt = txt.replace(acento, simples)
-            return txt
+        pdf.set_font('helvetica', '', 12)
         
         # Título
         pdf.set_font_size(16)
-        pdf.cell(0, 10, safe_text(f"Relatório Financeiro - {mes_nome}/{ano}"), ln=True, align="C")
+        pdf.cell(0, 10, remover_acentos(f"Relatorio Financeiro - {mes_nome}/{ano}"), ln=True, align="C")
         pdf.ln(5)
         
         # Renda
         pdf.set_font_size(12)
         pdf.set_font(style='B')
-        pdf.cell(0, 8, safe_text(f"Renda Total: R$ {total_renda:.2f}"), ln=True)
+        pdf.cell(0, 8, remover_acentos(f"Renda Total: R$ {total_renda:.2f}"), ln=True)
         pdf.set_font(style='')
         for _, row in renda_df.iterrows():
-            pdf.cell(0, 6, safe_text(f"{row['Fonte']}: R$ {row['Valor (R$)']:.2f}"), ln=True)
+            pdf.cell(0, 6, remover_acentos(f"{row['Fonte']}: R$ {row['Valor (R$)']:.2f}"), ln=True)
         pdf.ln(5)
         
         # Despesas Fixas
         pdf.set_font(style='B')
-        pdf.cell(0, 8, safe_text(f"Despesas Fixas: R$ {t_fix:.2f}"), ln=True)
+        pdf.cell(0, 8, remover_acentos(f"Despesas Fixas: R$ {t_fix:.2f}"), ln=True)
         pdf.set_font(style='')
         for _, row in fixos_df.iterrows():
             status = "Pago" if row.get("Pago", False) else "Pendente"
-            pdf.cell(0, 6, safe_text(f"{row['Descrição']}: R$ {row['Valor (R$)']:.2f} ({status})"), ln=True)
+            pdf.cell(0, 6, remover_acentos(f"{row['Descricao']}: R$ {row['Valor (R$)']:.2f} ({status})"), ln=True)
         pdf.ln(5)
         
         # Despesas Casuais
         pdf.set_font(style='B')
-        pdf.cell(0, 8, safe_text(f"Despesas do Dia a Dia: R$ {t_cas:.2f}"), ln=True)
+        pdf.cell(0, 8, remover_acentos(f"Despesas do Dia a Dia: R$ {t_cas:.2f}"), ln=True)
         pdf.set_font(style='')
         for _, row in casuais_df.iterrows():
             data_str = row['Data'].strftime("%d/%m/%Y") if hasattr(row['Data'], 'strftime') else str(row['Data'])
-            pdf.cell(0, 6, safe_text(f"{data_str} - {row['Categoria']} - {row['Descrição']}: R$ {row['Valor (R$)']:.2f}"), ln=True)
+            pdf.cell(0, 6, remover_acentos(f"{data_str} - {row['Categoria']} - {row['Descricao']}: R$ {row['Valor (R$)']:.2f}"), ln=True)
         pdf.ln(5)
         
         # Guias Extras
         pdf.set_font(style='B')
-        pdf.cell(0, 8, safe_text(f"Guias (Parcelamentos): R$ {t_gui:.2f}"), ln=True)
+        pdf.cell(0, 8, remover_acentos(f"Guias (Parcelamentos): R$ {t_gui:.2f}"), ln=True)
         pdf.set_font(style='')
         for guia in guias_extras:
             df_g, _, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), MESES[mes_nome], ano)
             for _, row in df_g.iterrows():
-                pdf.cell(0, 6, safe_text(f"{guia} - {row['Descrição']} ({row['Categoria']}): R$ {row['Valor (R$)']:.2f}"), ln=True)
+                pdf.cell(0, 6, remover_acentos(f"{guia} - {row['Descricao']} ({row['Categoria']}): R$ {row['Valor (R$)']:.2f}"), ln=True)
         pdf.ln(5)
         
         # Resumo por Categoria
         pdf.set_font(style='B')
-        pdf.cell(0, 8, safe_text("Gastos por Categoria"), ln=True)
+        pdf.cell(0, 8, remover_acentos("Gastos por Categoria"), ln=True)
         pdf.set_font(style='')
         for cat, valor in dados_categoria.items():
-            pdf.cell(0, 6, safe_text(f"{cat}: R$ {valor:.2f}"), ln=True)
+            pdf.cell(0, 6, remover_acentos(f"{cat}: R$ {valor:.2f}"), ln=True)
         pdf.ln(5)
         
         # Sobra
@@ -262,7 +229,7 @@ if check_password():
             pdf.set_text_color(0, 150, 0)
         else:
             pdf.set_text_color(200, 0, 0)
-        pdf.cell(0, 8, safe_text(f"Sobra do Mês: R$ {sobra:.2f}"), ln=True)
+        pdf.cell(0, 8, remover_acentos(f"Sobra do Mes: R$ {sobra:.2f}"), ln=True)
         pdf.set_text_color(0, 0, 0)
         
         return pdf.output(dest='S').encode('latin-1')

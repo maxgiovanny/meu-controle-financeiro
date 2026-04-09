@@ -32,55 +32,28 @@ except Exception:
     st.error("Erro ao ligar ao Google Sheets.")
     st.stop()
 
-# --- FUNÇÕES DE BACKUP E RESTAURAÇÃO (DESFAZER) ---
-def criar_ponto_restauracao():
-    # Salva o estado atual antes da nova alteração
-    backup = {
-        "renda": st.session_state.renda,
-        "guias_extras": list(st.session_state.guias_extras),
-        "gastos_fixos": st.session_state.gastos_fixos.copy(),
-        "gastos_casuais": st.session_state.gastos_casuais.copy(),
-    }
-    for guia in st.session_state.guias_extras:
-        if f"dados_{guia}" in st.session_state:
-            backup[f"dados_{guia}"] = st.session_state[f"dados_{guia}"].copy()
-    st.session_state.backup_anterior = backup
-
-def desfazer_acao():
-    if "backup_anterior" in st.session_state and st.session_state.backup_anterior:
-        b = st.session_state.backup_anterior
-        st.session_state.renda = b["renda"]
-        st.session_state.guias_extras = b["guias_extras"]
-        st.session_state.gastos_fixos = b["gastos_fixos"]
-        st.session_state.gastos_casuais = b["gastos_casuais"]
-        for guia in st.session_state.guias_extras:
-            if f"dados_{guia}" in b:
-                st.session_state[f"dados_{guia}"] = b[f"dados_{guia}"]
-        st.session_state.backup_anterior = None # Limpa para evitar loop
-        salvar_dados_nuvem()
-        st.rerun()
-
-# --- FUNÇÕES DE GUARDAR E CARREGAR ---
-def carregar_dados_nuvem():
-    try:
-        valor = worksheet.acell('A1').value
-        if valor: return json.loads(valor)
-    except: pass
-    return None
-
+# --- FUNÇÕES DE BACKUP E SALVAMENTO ---
 def salvar_dados_nuvem():
+    # Preparamos os dados mensais para salvar
+    mes_ano_chave = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
+    
+    # Tratamento de data para gastos casuais
     casuais_dict = st.session_state.gastos_casuais.copy()
     if "Data" in casuais_dict.columns:
         casuais_dict["Data"] = casuais_dict["Data"].astype(str)
     
+    # Estrutura do JSON
     dados_completos = {
-        "ano_atual": st.session_state.ano_atual,
-        "mes_atual": st.session_state.mes_atual,
         "renda": st.session_state.renda,
         "guias_extras": st.session_state.guias_extras,
-        "gastos_fixos": st.session_state.gastos_fixos.to_dict("records"),
-        "gastos_casuais": casuais_dict.to_dict("records")
+        "historico_fixos": st.session_state.historico_fixos, # Aqui moram os meses independentes
+        "historico_casuais": st.session_state.historico_casuais
     }
+    
+    # Salva o estado ATUAL do mês selecionado nos históricos
+    dados_completos["historico_fixos"][mes_ano_chave] = st.session_state.gastos_fixos.to_dict("records")
+    dados_completos["historico_casuais"][mes_ano_chave] = casuais_dict.to_dict("records")
+
     for guia in st.session_state.guias_extras:
         if f"dados_{guia}" in st.session_state:
             dados_completos[f"dados_{guia}"] = st.session_state[f"dados_{guia}"].to_dict("records")
@@ -89,29 +62,47 @@ def salvar_dados_nuvem():
     worksheet.update(values=[[json_str]], range_name='A1')
     st.toast("💾 Sincronizado!", icon="✅")
 
+def carregar_dados_sessao():
+    mes_ano_chave = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
+    
+    # 1. Carregar Gastos Fixos do Mês
+    if mes_ano_chave in st.session_state.historico_fixos:
+        st.session_state.gastos_fixos = pd.DataFrame(st.session_state.historico_fixos[mes_ano_chave])
+    else:
+        # Se é um mês novo, pegamos a lista do mês anterior (se existir) mas resetamos o "Pago"
+        if st.session_state.historico_fixos:
+            ultima_lista = list(st.session_state.historico_fixos.values())[-1]
+            df_novo = pd.DataFrame(ultima_lista)
+            df_novo["Pago"] = False # Reseta o check
+            st.session_state.gastos_fixos = df_novo
+        else:
+            st.session_state.gastos_fixos = pd.DataFrame(columns=["Descrição", "Valor (R$)", "Pago"])
+
+    # 2. Carregar Gastos Casuais do Mês
+    if mes_ano_chave in st.session_state.historico_casuais:
+        df_c = pd.DataFrame(st.session_state.historico_casuais[mes_ano_chave])
+        df_c["Data"] = pd.to_datetime(df_c["Data"]).dt.date
+        st.session_state.gastos_casuais = df_c
+    else:
+        st.session_state.gastos_casuais = pd.DataFrame(columns=["Data", "Categoria", "Descrição", "Valor (R$)"])
+
 # --- INICIALIZAÇÃO ---
 if "dados_carregados" not in st.session_state:
-    dados_nuvem = carregar_dados_nuvem()
-    if dados_nuvem:
-        st.session_state.ano_atual = dados_nuvem.get("ano_atual", 2026)
-        st.session_state.mes_atual = dados_nuvem.get("mes_atual", "Maio")
-        st.session_state.renda = dados_nuvem.get("renda", 10000.0)
-        st.session_state.guias_extras = dados_nuvem.get("guias_extras", [])
-        st.session_state.gastos_fixos = pd.DataFrame(dados_nuvem.get("gastos_fixos", []))
-        df_casuais = pd.DataFrame(dados_nuvem.get("gastos_casuais", []))
-        if not df_casuais.empty:
-            if "Data" in df_casuais.columns: df_casuais["Data"] = pd.to_datetime(df_casuais["Data"]).dt.date
-            if "Categoria" not in df_casuais.columns: df_casuais["Categoria"] = "Outros"
-        else:
-            df_casuais = pd.DataFrame(columns=["Data", "Categoria", "Descrição", "Valor (R$)"])
-        st.session_state.gastos_casuais = df_casuais
-        for guia in st.session_state.guias_extras:
-            st.session_state[f"dados_{guia}"] = pd.DataFrame(dados_nuvem.get(f"dados_{guia}", []))
-    else:
-        st.session_state.ano_atual, st.session_state.mes_atual, st.session_state.renda = 2026, "Maio", 10000.0
-        st.session_state.guias_extras, st.session_state.gastos_fixos = [], pd.DataFrame(columns=["Descrição", "Valor (R$)", "Pago"])
-        st.session_state.gastos_casuais = pd.DataFrame(columns=["Data", "Categoria", "Descrição", "Valor (R$)"])
-    st.session_state.backup_anterior = None
+    valor_nuvem = worksheet.acell('A1').value
+    dados = json.loads(valor_nuvem) if valor_nuvem else {}
+    
+    st.session_state.ano_atual = 2026
+    st.session_state.mes_atual = "Abril"
+    st.session_state.renda = dados.get("renda", 10000.0)
+    st.session_state.guias_extras = dados.get("guias_extras", [])
+    st.session_state.historico_fixos = dados.get("historico_fixos", {})
+    st.session_state.historico_casuais = dados.get("historico_casuais", {})
+    
+    # Carrega as guias extras de cartões
+    for guia in st.session_state.guias_extras:
+        st.session_state[f"dados_{guia}"] = pd.DataFrame(dados.get(f"dados_{guia}", []))
+    
+    carregar_dados_sessao()
     st.session_state.dados_carregados = True
 
 # --- LÓGICA DE CÁLCULO ---
@@ -137,39 +128,27 @@ def calcular_parcelas_v2(df, mes_alvo, ano_alvo):
 with st.sidebar:
     st.header("⚙️ Ajustes")
     
-    # Botão Desfazer
-    if st.session_state.backup_anterior is not None:
-        if st.button("🔙 Desfazer Última Ação", use_container_width=True, type="secondary"):
-            desfazer_acao()
-    
     novo_mes = st.selectbox("Mês:", list(MESES.keys()), index=list(MESES.keys()).index(st.session_state.mes_atual))
     novo_ano = st.number_input("Ano:", min_value=2024, max_value=2030, value=st.session_state.ano_atual)
     
+    if novo_mes != st.session_state.mes_atual or novo_ano != st.session_state.ano_atual:
+        # Antes de mudar, salva o que está na tela
+        salvar_dados_nuvem()
+        st.session_state.mes_atual, st.session_state.ano_atual = novo_mes, novo_ano
+        carregar_dados_sessao()
+        st.rerun()
+
     nova_renda = st.number_input("Renda (R$):", value=st.session_state.renda, step=100.0)
     if nova_renda != st.session_state.renda:
-        criar_ponto_restauracao()
         st.session_state.renda = nova_renda
         salvar_dados_nuvem()
 
-    if novo_mes != st.session_state.mes_atual or novo_ano != st.session_state.ano_atual:
-        st.session_state.mes_atual, st.session_state.ano_atual = novo_mes, novo_ano
-        st.rerun()
-        
     st.divider()
     n_guia = st.text_input("Nova Guia:")
     if st.button("➕ Criar"):
         if n_guia and n_guia not in st.session_state.guias_extras:
-            criar_ponto_restauracao()
             st.session_state.guias_extras.append(n_guia)
             st.session_state[f"dados_{n_guia}"] = pd.DataFrame(columns=["Descrição", "Mês Início (1-12)", "Ano Início", "Qtd Parcelas", "Valor Parcela (R$)"])
-            salvar_dados_nuvem()
-            st.rerun()
-    
-    if st.session_state.guias_extras:
-        g_rem = st.selectbox("Apagar Guia:", st.session_state.guias_extras)
-        if st.button("🗑️ Apagar"):
-            criar_ponto_restauracao()
-            st.session_state.guias_extras.remove(g_rem)
             salvar_dados_nuvem()
             st.rerun()
 
@@ -194,13 +173,14 @@ if sel == "Resumo":
     c2.metric("Sobra", f"R$ {sobra:,.2f}")
 
 elif sel == "Fixos":
+    st.header("Gastos Fixos")
     ed_f = st.data_editor(st.session_state.gastos_fixos, num_rows="dynamic", use_container_width=True, hide_index=True)
     if not ed_f.equals(st.session_state.gastos_fixos):
-        criar_ponto_restauracao()
         st.session_state.gastos_fixos = ed_f
         salvar_dados_nuvem()
 
 elif sel == "Dia a Dia":
+    st.header("Gastos Diários")
     ed_c = st.data_editor(st.session_state.gastos_casuais, num_rows="dynamic", use_container_width=True, hide_index=True,
         column_config={
             "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY", default=datetime.now().date()),
@@ -208,12 +188,8 @@ elif sel == "Dia a Dia":
             "Valor (R$)": st.column_config.NumberColumn("Valor (R$)", format="%.2f")
         })
     if not ed_c.equals(st.session_state.gastos_casuais):
-        criar_ponto_restauracao()
         st.session_state.gastos_casuais = ed_c
         salvar_dados_nuvem()
-    if not st.session_state.gastos_casuais.empty:
-        st.divider()
-        st.dataframe(st.session_state.gastos_casuais.groupby("Categoria")["Valor (R$)"].sum().reset_index(), use_container_width=True, hide_index=True)
 
 else:
     df_res, v_tot = calcular_parcelas_v2(st.session_state[f"dados_{sel}"], mes_num, ano_ref)
@@ -222,7 +198,6 @@ else:
     st.divider()
     ed_g = st.data_editor(st.session_state[f"dados_{sel}"], num_rows="dynamic", use_container_width=True, hide_index=True, key=f"ed_{sel}")
     if not ed_g.equals(st.session_state[f"dados_{sel}"]):
-        criar_ponto_restauracao()
         st.session_state[f"dados_{sel}"] = ed_g
         salvar_dados_nuvem()
         st.rerun()

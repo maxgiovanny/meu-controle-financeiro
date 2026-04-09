@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 from fpdf import FPDF
 import base64
-import io
 
 # --- 1. FUNÇÃO DE SEGURANÇA (LOGIN) ---
 def check_password():
@@ -158,6 +157,75 @@ if check_password():
         soma_cat = df_parc.groupby("Categoria")["Valor (R$)"].sum().to_dict() if not df_parc.empty else {}
         return df_parc, total, soma_cat
 
+    # --- FUNÇÃO PARA GERAR PDF (COM FPDF2 E UNICODE) ---
+    def gerar_pdf_mes(mes_nome, ano, renda_df, fixos_df, casuais_df, guias_extras, total_renda, t_fix, t_cas, t_gui, sobra, dados_categoria):
+        pdf = FPDF()
+        pdf.add_page()
+        # Usa fonte DejaVu (já inclusa no fpdf2)
+        pdf.add_font('DejaVu', '', 'DejaVuSansCondensed.ttf', uni=True)
+        pdf.set_font('DejaVu', '', 12)
+        
+        # Título
+        pdf.set_font_size(16)
+        pdf.cell(0, 10, f"Relatório Financeiro - {mes_nome}/{ano}", ln=True, align="C")
+        pdf.ln(5)
+        
+        # Renda
+        pdf.set_font_size(12)
+        pdf.set_font('DejaVu', 'B', 12)
+        pdf.cell(0, 8, f"Renda Total: R$ {total_renda:.2f}", ln=True)
+        pdf.set_font('DejaVu', '', 10)
+        for _, row in renda_df.iterrows():
+            pdf.cell(0, 6, f"{row['Fonte']}: R$ {row['Valor (R$)']:.2f}", ln=True)
+        pdf.ln(5)
+        
+        # Despesas Fixas
+        pdf.set_font('DejaVu', 'B', 12)
+        pdf.cell(0, 8, f"Despesas Fixas: R$ {t_fix:.2f}", ln=True)
+        pdf.set_font('DejaVu', '', 10)
+        for _, row in fixos_df.iterrows():
+            status = "Pago" if row.get("Pago", False) else "Pendente"
+            pdf.cell(0, 6, f"{row['Descrição']}: R$ {row['Valor (R$)']:.2f} ({status})", ln=True)
+        pdf.ln(5)
+        
+        # Despesas Casuais
+        pdf.set_font('DejaVu', 'B', 12)
+        pdf.cell(0, 8, f"Despesas do Dia a Dia: R$ {t_cas:.2f}", ln=True)
+        pdf.set_font('DejaVu', '', 10)
+        for _, row in casuais_df.iterrows():
+            data_str = row['Data'].strftime("%d/%m/%Y") if hasattr(row['Data'], 'strftime') else str(row['Data'])
+            pdf.cell(0, 6, f"{data_str} - {row['Categoria']} - {row['Descrição']}: R$ {row['Valor (R$)']:.2f}", ln=True)
+        pdf.ln(5)
+        
+        # Guias Extras
+        pdf.set_font('DejaVu', 'B', 12)
+        pdf.cell(0, 8, f"Guias (Parcelamentos): R$ {t_gui:.2f}", ln=True)
+        pdf.set_font('DejaVu', '', 10)
+        for guia in guias_extras:
+            df_g, _, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), MESES[mes_nome], ano)
+            for _, row in df_g.iterrows():
+                pdf.cell(0, 6, f"{guia} - {row['Descrição']} ({row['Categoria']}): R$ {row['Valor (R$)']:.2f}", ln=True)
+        pdf.ln(5)
+        
+        # Resumo por Categoria
+        pdf.set_font('DejaVu', 'B', 12)
+        pdf.cell(0, 8, "Gastos por Categoria", ln=True)
+        pdf.set_font('DejaVu', '', 10)
+        for cat, valor in dados_categoria.items():
+            pdf.cell(0, 6, f"{cat}: R$ {valor:.2f}", ln=True)
+        pdf.ln(5)
+        
+        # Sobra
+        pdf.set_font('DejaVu', 'B', 12)
+        if sobra >= 0:
+            pdf.set_text_color(0, 150, 0)
+        else:
+            pdf.set_text_color(200, 0, 0)
+        pdf.cell(0, 8, f"Sobra do Mês: R$ {sobra:.2f}", ln=True)
+        pdf.set_text_color(0, 0, 0)
+        
+        return pdf.output(dest='S').encode('latin-1')
+
     # --- INICIALIZAÇÃO ---
     if "dados_carregados" not in st.session_state:
         dados_raw = carregar_dados_nuvem_raw()
@@ -174,12 +242,10 @@ if check_password():
         for g in st.session_state.guias_extras:
             dados_g = dados_raw.get(f"dados_{g}", [])
             if dados_g and isinstance(dados_g, list) and len(dados_g) > 0:
-                # Verifica se já tem a coluna Categoria
                 if "Categoria" not in dados_g[0]:
                     for item in dados_g:
                         item["Categoria"] = "Outros"
             st.session_state[f"dados_{g}"] = pd.DataFrame(dados_g)
-            # Se vazio, cria com coluna Categoria
             if st.session_state[f"dados_{g}"].empty:
                 st.session_state[f"dados_{g}"] = pd.DataFrame(columns=["Descrição", "Valor Parcela (R$)", "Mês Início (1-12)", "Ano Início", "Qtd Parcelas", "Categoria"])
         
@@ -189,66 +255,6 @@ if check_password():
     # --- OBTEM LISTA COMPLETA DE CATEGORIAS ---
     def get_categorias():
         return CATEGORIAS_PADRAO + st.session_state.categorias_personalizadas
-
-    # --- FUNÇÃO PARA GERAR PDF ---
-    def gerar_pdf_mes(mes_nome, ano, renda_df, fixos_df, casuais_df, guias_extras, total_renda, t_fix, t_cas, t_gui, sobra, dados_categoria):
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", "B", 16)
-        pdf.cell(0, 10, f"Relatório Financeiro - {mes_nome}/{ano}", ln=True, align="C")
-        pdf.ln(5)
-        
-        # Renda
-        pdf.set_font("Arial", "B", 12)
-        pdf.cell(0, 8, "Renda Total: R$ {:.2f}".format(total_renda), ln=True)
-        pdf.set_font("Arial", "", 10)
-        for _, row in renda_df.iterrows():
-            pdf.cell(0, 6, f"{row['Fonte']}: R$ {row['Valor (R$)']:.2f}", ln=True)
-        pdf.ln(5)
-        
-        # Despesas Fixas
-        pdf.set_font("Arial", "B", 12)
-        pdf.cell(0, 8, f"Despesas Fixas: R$ {t_fix:.2f}", ln=True)
-        pdf.set_font("Arial", "", 10)
-        for _, row in fixos_df.iterrows():
-            status = "Pago" if row.get("Pago", False) else "Pendente"
-            pdf.cell(0, 6, f"{row['Descrição']}: R$ {row['Valor (R$)']:.2f} ({status})", ln=True)
-        pdf.ln(5)
-        
-        # Despesas Casuais
-        pdf.set_font("Arial", "B", 12)
-        pdf.cell(0, 8, f"Despesas do Dia a Dia: R$ {t_cas:.2f}", ln=True)
-        pdf.set_font("Arial", "", 10)
-        for _, row in casuais_df.iterrows():
-            pdf.cell(0, 6, f"{row['Data']} - {row['Categoria']} - {row['Descrição']}: R$ {row['Valor (R$)']:.2f}", ln=True)
-        pdf.ln(5)
-        
-        # Guias Extras
-        pdf.set_font("Arial", "B", 12)
-        pdf.cell(0, 8, f"Guias (Parcelamentos): R$ {t_gui:.2f}", ln=True)
-        pdf.set_font("Arial", "", 10)
-        for guia in guias_extras:
-            df_g, _, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), MESES[mes_nome], ano)
-            for _, row in df_g.iterrows():
-                pdf.cell(0, 6, f"{guia} - {row['Descrição']} ({row['Categoria']}): R$ {row['Valor (R$)']:.2f}", ln=True)
-        pdf.ln(5)
-        
-        # Resumo por Categoria
-        pdf.set_font("Arial", "B", 12)
-        pdf.cell(0, 8, "Gastos por Categoria", ln=True)
-        pdf.set_font("Arial", "", 10)
-        for cat, valor in dados_categoria.items():
-            pdf.cell(0, 6, f"{cat}: R$ {valor:.2f}", ln=True)
-        pdf.ln(5)
-        
-        # Sobra
-        pdf.set_font("Arial", "B", 12)
-        cor = (0, 255, 0) if sobra >= 0 else (255, 0, 0)
-        pdf.set_text_color(*cor)
-        pdf.cell(0, 8, f"Sobra do Mês: R$ {sobra:.2f}", ln=True)
-        pdf.set_text_color(0, 0, 0)
-        
-        return pdf.output(dest='S').encode('latin-1')
 
     # --- SIDEBAR ---
     with st.sidebar:
@@ -272,6 +278,42 @@ if check_password():
             st.session_state.mes_atual, st.session_state.ano_atual = m_sel, a_sel
             carregar_dados_sessao()
             st.rerun()
+
+        # --- BOTÃO DE GERAR PDF (AGORA NA SIDEBAR) ---
+        st.divider()
+        if st.button("📄 Gerar Relatório PDF deste mês", use_container_width=True):
+            # Cálculos para o PDF
+            mes_n, ano_r = MESES[st.session_state.mes_atual], st.session_state.ano_atual
+            t_fix = float(st.session_state.gastos_fixos["Valor (R$)"].sum()) if not st.session_state.gastos_fixos.empty else 0.0
+            t_cas = float(st.session_state.gastos_casuais["Valor (R$)"].sum()) if not st.session_state.gastos_casuais.empty else 0.0
+            
+            total_guias = 0.0
+            gastos_categoria = {}
+            for _, row in st.session_state.gastos_casuais.iterrows():
+                cat = row["Categoria"]
+                gastos_categoria[cat] = gastos_categoria.get(cat, 0.0) + row["Valor (R$)"]
+            
+            for guia in st.session_state.guias_extras:
+                _, tot_guia, cats_guia = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
+                total_guias += tot_guia
+                for cat, val in cats_guia.items():
+                    gastos_categoria[cat] = gastos_categoria.get(cat, 0.0) + val
+            
+            total_renda = st.session_state.renda_detalhada["Valor (R$)"].sum()
+            sobra = total_renda - (t_fix + t_cas + total_guias)
+            
+            pdf_data = gerar_pdf_mes(
+                st.session_state.mes_atual, st.session_state.ano_atual,
+                st.session_state.renda_detalhada,
+                st.session_state.gastos_fixos,
+                st.session_state.gastos_casuais,
+                st.session_state.guias_extras,
+                total_renda, t_fix, t_cas, total_guias, sobra,
+                gastos_categoria
+            )
+            b64 = base64.b64encode(pdf_data).decode()
+            href = f'<a href="data:application/octet-stream;base64,{b64}" download="relatorio_{st.session_state.mes_atual}_{st.session_state.ano_atual}.pdf">📥 Clique aqui para baixar o PDF</a>'
+            st.markdown(href, unsafe_allow_html=True)
 
         st.divider()
         ver_projecao = st.checkbox("📈 Ver Projeção Futura (6 meses)")
@@ -341,15 +383,13 @@ if check_password():
                             st.rerun()
                         else: st.warning("Já está no final.")
 
-    # --- CÁLCULOS DO MÊS ---
+    # --- CÁLCULOS DO MÊS (para uso na interface principal) ---
     mes_n, ano_r = MESES[st.session_state.mes_atual], st.session_state.ano_atual
     t_fix = float(st.session_state.gastos_fixos["Valor (R$)"].sum()) if not st.session_state.gastos_fixos.empty else 0.0
     t_cas = float(st.session_state.gastos_casuais["Valor (R$)"].sum()) if not st.session_state.gastos_casuais.empty else 0.0
     
-    # Soma das guias e agregação por categoria
     total_guias = 0.0
     gastos_categoria = {}
-    # Adiciona despesas casuais
     for _, row in st.session_state.gastos_casuais.iterrows():
         cat = row["Categoria"]
         gastos_categoria[cat] = gastos_categoria.get(cat, 0.0) + row["Valor (R$)"]
@@ -365,24 +405,6 @@ if check_password():
 
     # --- INTERFACE PRINCIPAL ---
     st.title(f"💰 {st.session_state.mes_atual} / {st.session_state.ano_atual}")
-
-    # Botão de relatório PDF
-    col_pdf, _ = st.columns([1, 5])
-    with col_pdf:
-        if st.button("📄 Gerar Relatório PDF deste mês"):
-            pdf_data = gerar_pdf_mes(
-                st.session_state.mes_atual, st.session_state.ano_atual,
-                st.session_state.renda_detalhada,
-                st.session_state.gastos_fixos,
-                st.session_state.gastos_casuais,
-                st.session_state.guias_extras,
-                total_renda, t_fix, t_cas, total_guias, sobra,
-                gastos_categoria
-            )
-            b64 = base64.b64encode(pdf_data).decode()
-            href = f'<a href="data:application/octet-stream;base64,{b64}" download="relatorio_{st.session_state.mes_atual}_{st.session_state.ano_atual}.pdf">📥 Clique para baixar o PDF</a>'
-            st.markdown(href, unsafe_allow_html=True)
-    st.divider()
 
     opcoes = ["Resumo Geral", "Renda", "Gastos Fixos", "Dia a Dia", "Resumo das Guias"] + st.session_state.guias_extras
     sel = st.selectbox("Ir para:", opcoes)
@@ -464,7 +486,6 @@ if check_password():
             st.dataframe(df_parc, use_container_width=True, hide_index=True)
         st.divider()
         st.write("**Base de Lançamentos (parcelas):**")
-        colunas_guias = ["Descrição", "Valor Parcela (R$)", "Mês Início (1-12)", "Ano Início", "Qtd Parcelas", "Categoria"]
         de = st.data_editor(st.session_state[f"dados_{sel}"], num_rows="dynamic", use_container_width=True, hide_index=True,
                             column_config={
                                 "Valor Parcela (R$)": st.column_config.NumberColumn(format="R$ %.2f", min_value=0),

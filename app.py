@@ -160,4 +160,40 @@ sel = st.selectbox("Ir para:", ["Resumo", "Fixos", "Dia a Dia"] + st.session_sta
 if sel == "Resumo":
     gasto_total = t_fixos + t_casuais + t_guias
     sobra = max(0.0, st.session_state.renda - gasto_total)
-    df_grafico = pd.DataFrame({"Cat": ["Fixos", "Dia a Dia", "Guias", "Sobra"], "Val": [t_fixos, t
+    df_grafico = pd.DataFrame({"Cat": ["Fixos", "Dia a Dia", "Guias", "Sobra"], "Val": [t_fixos, t_casuais, t_guias, sobra]})
+    fig = px.pie(df_grafico, values='Val', names='Cat', hole=.4, color_discrete_sequence=px.colors.qualitative.Pastel)
+    fig.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300)
+    st.plotly_chart(fig, use_container_width=True)
+    c1, c2 = st.columns(2)
+    c1.metric("Gasto Total", f"R$ {gasto_total:,.2f}")
+    c2.metric("Sobra", f"R$ {sobra:,.2f}")
+
+elif sel == "Fixos":
+    st.header("Gastos Fixos")
+    ed_f = st.data_editor(st.session_state.gastos_fixos, num_rows="dynamic", use_container_width=True, hide_index=True)
+    if not ed_f.equals(st.session_state.gastos_fixos):
+        st.session_state.gastos_fixos = ed_f
+        salvar_dados_nuvem()
+
+elif sel == "Dia a Dia":
+    st.header("Gastos Diários")
+    ed_c = st.data_editor(st.session_state.gastos_casuais, num_rows="dynamic", use_container_width=True, hide_index=True,
+        column_config={
+            "Data": st.column_config.DateColumn("Data", format="DD/MM/YYYY", default=datetime.now().date()),
+            "Categoria": st.column_config.SelectboxColumn("Categoria", options=CATEGORIAS, default="Outros"),
+            "Valor (R$)": st.column_config.NumberColumn("Valor (R$)", format="%.2f")
+        })
+    if not ed_c.equals(st.session_state.gastos_casuais):
+        st.session_state.gastos_casuais = ed_c
+        salvar_dados_nuvem()
+
+else:
+    df_res, v_tot = calcular_parcelas_v2(st.session_state.get(f"dados_{sel}"), mes_num, ano_ref)
+    st.subheader(f"Total no Mês: R$ {v_tot:,.2f}")
+    if not df_res.empty: st.dataframe(df_res, use_container_width=True, hide_index=True)
+    st.divider()
+    ed_g = st.data_editor(st.session_state[f"dados_{sel}"], num_rows="dynamic", use_container_width=True, hide_index=True, key=f"ed_{sel}")
+    if not ed_g.equals(st.session_state[f"dados_{sel}"]):
+        st.session_state[f"dados_{sel}"] = ed_g
+        salvar_dados_nuvem()
+        st.rerun()

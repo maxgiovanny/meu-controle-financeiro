@@ -9,7 +9,6 @@ from fpdf import FPDF
 import unicodedata
 import tempfile
 import os
-import io
 
 # --- 1. FUNÇÃO DE SEGURANÇA (LOGIN) ---
 def check_password():
@@ -250,6 +249,8 @@ if check_password():
 
     if "pdf_ready" not in st.session_state:
         st.session_state.pdf_ready = False
+    if "pdf_data" not in st.session_state:
+        st.session_state.pdf_data = None
 
     def get_categorias():
         return CATEGORIAS_PADRAO + st.session_state.categorias_personalizadas
@@ -315,10 +316,11 @@ if check_password():
                 st.success("✅ Arquivo pronto! Clique abaixo para salvar.")
 
         # --- DOWNLOAD DO PDF ---
-        if st.session_state.pdf_ready:
+        # Passando os bytes puramente, sem o io.BytesIO() para evitar o unsupported_error
+        if st.session_state.pdf_ready and st.session_state.pdf_data is not None:
             st.download_button(
                 label="📥 2. Baixar PDF Agora",
-                data=io.BytesIO(st.session_state.pdf_data),
+                data=st.session_state.pdf_data,
                 file_name=f"relatorio_{st.session_state.mes_atual}_{st.session_state.ano_atual}.pdf",
                 mime="application/pdf",
                 use_container_width=True

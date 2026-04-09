@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 from fpdf import FPDF
 import unicodedata
+import tempfile
+import os
 
 # --- 1. FUNÇÃO DE SEGURANÇA (LOGIN) ---
 def check_password():
@@ -155,7 +157,7 @@ if check_password():
             texto = str(texto)
         return unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')
 
-    # --- GERAR PDF ---
+    # --- GERAR PDF (MÉTODO 100% SEGURO) ---
     def gerar_pdf_mes(mes_nome, ano, renda_df, fixos_df, casuais_df, guias_dados, total_renda, t_fix, t_cas, t_gui, sobra, dados_categoria):
         pdf = FPDF()
         pdf.add_page()
@@ -213,7 +215,17 @@ if check_password():
         pdf.cell(0, 8, remover_acentos(f"Sobra do Mes: R$ {sobra:.2f}"), ln=True)
         pdf.set_text_color(0,0,0)
         
-        return pdf.output(dest='S')
+        # Salvamento físico em arquivo temporário (evita corrupção de memória)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            temp_path = tmp.name
+        
+        pdf.output(temp_path, 'F')
+        
+        with open(temp_path, "rb") as f:
+            pdf_data = f.read()
+            
+        os.remove(temp_path)
+        return pdf_data
 
     # --- INICIALIZAÇÃO ---
     if "dados_carregados" not in st.session_state:
@@ -277,8 +289,8 @@ if check_password():
 
         st.divider()
         # Botão para gerar PDF
-        if st.button("📄 Gerar Relatório PDF deste mês", use_container_width=True):
-            with st.spinner("Gerando PDF... aguarde"):
+        if st.button("📄 Gerar Relatório PDF", use_container_width=True):
+            with st.spinner("Construindo o arquivo..."):
                 mes_n = MESES[st.session_state.mes_atual]
                 ano_r = st.session_state.ano_atual
                 t_fix_pdf = st.session_state.gastos_fixos["Valor (R$)"].sum() if not st.session_state.gastos_fixos.empty else 0.0
@@ -301,6 +313,7 @@ if check_password():
                 total_renda_pdf = st.session_state.renda_detalhada["Valor (R$)"].sum()
                 sobra_pdf = total_renda_pdf - (t_fix_pdf + t_cas_pdf + total_guias_pdf)
 
+                # Gera o PDF via arquivo temporário (resolve o erro silencioso)
                 pdf_bytes = gerar_pdf_mes(
                     st.session_state.mes_atual, st.session_state.ano_atual,
                     st.session_state.renda_detalhada,
@@ -310,21 +323,16 @@ if check_password():
                     total_renda_pdf, t_fix_pdf, t_cas_pdf, total_guias_pdf, sobra_pdf,
                     gastos_categoria_pdf
                 )
-                
-                # Garante que é bytes puro
-                if isinstance(pdf_bytes, str):
-                    pdf_bytes = pdf_bytes.encode('latin-1')
-                else:
-                    pdf_bytes = bytes(pdf_bytes)
                     
                 st.session_state.pdf_bytes = pdf_bytes
                 st.session_state.pdf_nome = f"relatorio_{st.session_state.mes_atual}_{st.session_state.ano_atual}.pdf"
                 st.rerun()
 
-        # Exibe o botão de download se o PDF estiver disponível
+        # Exibe o botão de download apenas se o PDF já foi processado e está pronto
         if st.session_state.pdf_bytes is not None:
+            st.success("✅ Arquivo pronto! Clique abaixo para salvar.")
             st.download_button(
-                label="📥 Baixar PDF",
+                label="📥 Baixar PDF Agora",
                 data=st.session_state.pdf_bytes,
                 file_name=st.session_state.pdf_nome,
                 mime="application/pdf",

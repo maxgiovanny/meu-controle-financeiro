@@ -827,32 +827,62 @@ if check_password():
 
     elif sel == "Metas de Orçamento":
         st.subheader("🎯 Metas e Limites Mensais")
-        st.write("Defina um orçamento para cada categoria e garanta que não ultrapassa o planeado.")
+        st.write("Defina um orçamento para cada categoria. Para editar, altere o valor na tabela. Para apagar, selecione a linha e aperte 'Delete' ou limpe o nome da categoria.")
         
-        with st.expander("⚙️ Configurar Novo Limite"):
-            with st.form("form_metas"):
-                cat_meta = st.selectbox("Escolha a Categoria", get_categorias())
-                val_meta = st.number_input("Orçamento Máximo (R$)", min_value=0.0, step=50.0)
-                if st.form_submit_button("Gravar Meta"):
-                    st.session_state.metas_orcamento[cat_meta] = val_meta
-                    salvar_dados_nuvem()
-                    st.success(f"Meta de '{cat_meta}' guardada com sucesso!")
-                    st.rerun()
+        # 1. Formatar os dados das metas para a tabela
+        df_metas_existentes = pd.DataFrame([
+            {"Categoria": k, "Limite (R$)": v} for k, v in st.session_state.metas_orcamento.items()
+        ])
+
+        # 2. Editor de Metas (Lápis e X integrados)
+        ed_metas = st.data_editor(
+            df_metas_existentes,
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Categoria": st.column_config.SelectboxColumn(options=get_categorias(), required=True),
+                "Limite (R$)": st.column_config.NumberColumn(format="R$ %.2f", min_value=0)
+            },
+            key="editor_metas_global"
+        )
+
+        # 3. Botão para Sincronizar Alterações
+        if st.button("💾 Salvar Alterações nas Metas"):
+            # Converte de volta para o dicionário do sistema, removendo linhas vazias
+            novas_metas = {
+                row["Categoria"]: safe_float(row["Limite (R$)"]) 
+                for _, row in ed_metas.iterrows() if row["Categoria"]
+            }
+            st.session_state.metas_orcamento = novas_metas
+            salvar_dados_nuvem()
+            st.rerun()
 
         st.markdown("---")
+        st.subheader("📊 Acompanhamento em Tempo Real")
+        
         metas_ativas = st.session_state.metas_orcamento
         if not metas_ativas:
-            st.info("Nenhuma meta definida. Use o menu acima para criar o seu primeiro orçamento.")
+            st.info("Nenhuma meta definida acima.")
         else:
             for cat, limite in metas_ativas.items():
                 gasto_atual = gastos_categoria.get(cat, 0.0)
-                perc = gasto_atual / limite if limite > 0 else 0
-                perc_visual = min(perc, 1.0)
-                
-                st.write(f"**{cat}**: Gasto R$ {gasto_atual:.2f} de R$ {limite:.2f} ({(perc*100):.1f}%)")
-                st.progress(perc_visual)
-                if perc >= 1.0:
-                    st.error(f"⚠️ Atenção! O orçamento de {cat} foi ultrapassado em R$ {gasto_atual - limite:.2f}.")
+                if limite > 0:
+                    perc = gasto_atual / limite
+                    perc_visual = min(perc, 1.0)
+                    
+                    col_texto, col_valor = st.columns([3, 1])
+                    col_texto.write(f"**{cat}**")
+                    col_valor.write(f"{gasto_atual:.2f} / {limite:.2f}")
+                    
+                    # Cor da barra: Verde se OK, Vermelho se estourou
+                    cor_barra = "normal" if perc < 1.0 else "red"
+                    st.progress(perc_visual)
+                    
+                    if perc >= 1.0:
+                        st.error(f"⚠️ Limite de {cat} ultrapassado em R$ {gasto_atual - limite:.2f}")
+                else:
+                    st.write(f"**{cat}**: Limite não definido ou zero.")
 
     elif sel == "Pesquisa Global":
         st.subheader("🔍 Procurar no Histórico")

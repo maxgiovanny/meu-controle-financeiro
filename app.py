@@ -12,9 +12,9 @@ import unicodedata
 import tempfile
 import os
 
-# --- TENTAR IMPORTAR GEMINI (biblioteca estável) ---
+# --- TENTAR IMPORTAR GEMINI (Nova SDK) ---
 try:
-    import google.generativeai as genai
+    from google import genai
     GEMINI_DISPONIVEL = True
 except ImportError:
     GEMINI_DISPONIVEL = False
@@ -50,28 +50,12 @@ if check_password():
 
     if GEMINI_DISPONIVEL and "GEMINI_API_KEY" in st.secrets:
         try:
-            genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-            # Usando o 1.5-flash, que é o mais rápido e tem cota gratuita generosa
-            client = genai.GenerativeModel('gemini-1.5-flash')
+            client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
             gemini_ok = True
         except Exception as e:
-            st.error(f"Erro ao configurar Gemini: {e}")
+            st.warning(f"Erro ao inicializar Gemini: {e}")
     elif not GEMINI_DISPONIVEL:
-        st.error("Biblioteca 'google-generativeai' não encontrada. Instale com: pip install google-generativeai")
-    elif "GEMINI_API_KEY" not in st.secrets:
-        st.error("Chave GEMINI_API_KEY não encontrada nos secrets.")
-
-    # Se ainda não conseguiu, tenta gemini-pro (fallback)
-    if not gemini_ok and GEMINI_DISPONIVEL and "GEMINI_API_KEY" in st.secrets:
-        try:
-            genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-            client = genai.GenerativeModel('gemini-pro')
-            test_response = client.generate_content("OK")
-            if test_response.text:
-                gemini_ok = True
-                st.success("✅ Gemini conectado com modelo gemini-pro!")
-        except:
-            pass
+        st.warning("Biblioteca 'google-genai' não instalada. IA desativada."))
             
     # --- CONSTANTES ---
     MESES = {"Janeiro":1,"Fevereiro":2,"Março":3,"Abril":4,"Maio":5,"Junho":6,
@@ -505,14 +489,15 @@ if check_password():
         os.remove(temp_path)
         return pdf_data
 
-# --- FUNÇÕES DE IA (GEMINI) - USANDO google.generativeai ---
-    
-    @st.cache_data(ttl=3600) # Salva a análise por 1 hora
+# --- FUNÇÕES DE IA (GEMINI) ---
+    @st.cache_data(ttl=3600)
     def analise_financeira_gemini(renda_total, despesa_total, sobra, gastos_categoria):
         if not gemini_ok or client is None:
-            return "IA não disponível. Verifique a chave da API ou a instalação."
+            return "IA não disponível. Verifique a chave."
+        
         top_categorias = sorted(gastos_categoria.items(), key=lambda x: x[1], reverse=True)[:3]
         texto_categorias = ", ".join([f"{cat} (R$ {val:,.2f})" for cat, val in top_categorias])
+        
         prompt = f"""
         Renda: R$ {renda_total:.2f}
         Despesas: R$ {despesa_total:.2f}
@@ -521,25 +506,32 @@ if check_password():
         Feedback curto (max 80 palavras) e dica prática.
         """
         try:
-            response = client.generate_content(prompt)
-            return response.text
+            resposta = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt
+            )
+            return resposta.text
         except Exception as e:
             if "429" in str(e):
-                return "⚠️ Limite de consultas atingido. Aguarde 1 minuto."
+                return "⚠️ Limite de consultas gratuito atingido. Aguarde 1 minuto."
             return f"Erro na IA: {e}"
 
-    @st.cache_data(ttl=86400) # Salva a sugestão por 24 horas
+    @st.cache_data(ttl=86400)
     def sugerir_categoria_gemini(descricao):
         if not gemini_ok or client is None:
             return "Outros"
+            
         categorias_disponiveis = get_categorias()
         prompt = f"""
         Categoria para: "{descricao}". Opções: {', '.join(categorias_disponiveis)}.
         Responda só com o nome da categoria.
         """
         try:
-            response = client.generate_content(prompt)
-            return response.text.strip()
+            resposta = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt
+            )
+            return resposta.text.strip()
         except Exception as e:
             return "Outros"
         

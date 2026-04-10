@@ -40,27 +40,118 @@ if check_password():
              "Julho":7,"Agosto":8,"Setembro":9,"Outubro":10,"Novembro":11,"Dezembro":12}
     CATEGORIAS_PADRAO_BASE = ["Alimentação","Transporte","Lazer","Saúde","Casa","Trabalho","Outros"]
 
-    # --- CONEXÃO GOOGLE SHEETS ---
+    # --- NOVA CONEXÃO GOOGLE SHEETS (Retorna a planilha inteira) ---
     @st.cache_resource
     def ligar_google_sheets():
         creds_dict = json.loads(st.secrets["gcp_service_account"])
         scopes = ["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-        return gspread.authorize(creds).open_by_url(st.secrets["url_planilha"]).sheet1
+        # Atenção: agora retorna a planilha completa, não apenas a sheet1
+        return gspread.authorize(creds).open_by_url(st.secrets["url_planilha"])
 
     try:
-        worksheet = ligar_google_sheets()
-    except Exception:
-        st.error("Erro de conexão com a nuvem. Verifique a planilha e a chave.")
+        db = ligar_google_sheets()
+    except Exception as e:
+        st.error(f"Erro de conexão com a nuvem. Verifique a planilha e a chave. Erro: {e}")
         st.stop()
 
-    # --- AUXILIARES ---
-    def obter_mes_anterior(mes_nome, ano_atual):
-        lista = list(MESES.keys())
-        idx = lista.index(mes_nome)
-        return (lista[idx-1], ano_atual) if idx>0 else ("Dezembro", ano_atual-1)
+    # --- NOVO SISTEMA DE BANCO DE DADOS (Leitura Relacional) ---
+    def carregar_dados_nuvem_raw():
+        db_conn = ligar_google_sheets()
+        migrado_agora = False
+        
+        try:
+            ws_config = db_conn.worksheet("Configuracoes")
+            ws_casuais = db_conn.worksheet("Casuais")
+            ws_fixos = db_conn.worksheet("Fixos")
+            ws_guias = db_conn.worksheet("Guias")
+        except gspread.exceptions.WorksheetNotFound:
+            migrado_agora = True
+            # --- MOTOR DE MIGRAÇÃO AUTOMÁTICA ---
+            ws_original = db_conn.sheet1
+            val = ws_original.acell('A1').value
+            dados_antigos = json.loads(val) if val else {}
+            
+            # Criar as novas abas
+            db_conn.add_worksheet("Casuais", rows=1000, cols=5)
+            db_conn.add_worksheet("Fixos", rows=1000, cols=5)
+            db_conn.add_worksheet("Guias", rows=1000, cols=7)
+            db_conn.add_worksheet("Configuracoes", rows=100, cols=2)
+            
+            try:
+                ws_original.update_title("Backup_Antigo")
+            except:
+                pass # Caso já exista algo com esse nome
+                
+            return dados_antigos, migrado_agora
 
+        # --- LEITURA NORMAL (Pós-migração) ---
+        dados_casuais = ws_casuais.get_all_records()
+        hist_casuais = {}
+        for row in dados_casuais:
+            ma = str(row.get("Mes_Ano", ""))
+            if not ma: continue
+            if ma not in hist_casuais: hist_casuais[ma] = []
+            hist_casuais[ma].append({
+                "Data": str(row.get("Data", "")),
+                "Categoria": str(row.get("Categoria", "")),
+                "Descrição": str(row.get("Descrição", "")),
+                "Valor (R$)": float(row.get("Valor", 0))
+            })
+
+        dados_fixos = ws_fixos.get_all_records()
+        hist_fixos = {}
+        for row in dados_fixos:
+            ma = str(row.get("Mes_Ano", ""))
+            if not ma: continue
+            if ma not in hist_fixos: hist_fixos[ma] = []
+            hist_fixos[ma].append({
+                "Descrição": str(row.get("Descrição", "")),
+                "Categoria": str(row.get("Categoria", "")),
+                "Valor (R$)": float(row.get("Valor", 0)),
+                "Pago": str(row.get("Pago", "")).strip().lower() == 'true'
+            })
+
+        dados_guias = ws_guias.get_all_records()
+        dict_guias = {}
+        for row in dados_guias:
+            g = str(row.get("Guia", ""))
+            if not g: continue
+            if g not in dict_guias: dict_guias[g] = []
+            dict_guias[g].append({
+                "Descrição": str(row.get("Descrição", "")),
+                "Categoria": str(row.get("Categoria", "")),
+                "Valor Parcela (R$)": float(row.get("Valor Parcela", 0)),
+                "Mês Início (1-12)": int(row.get("Mês Início", 1)),
+                "Ano Início": int(row.get("Ano Início", 2026)),
+                "Qtd Parcelas": int(row.get("Qtd Parcelas", 1))
+            })
+
+        val_conf = ws_config.acell('A1').value
+        try:
+            config = json.loads(val_conf) if val_conf else {}
+        except:
+            config = {}
+
+        result = {
+            "historico_casuais": hist_casuais,
+            "historico_fixos": hist_fixos,
+            "guias_extras": config.get("guias_extras", []),
+            "categorias_personalizadas": config.get("categorias_personalizadas", []),
+            "categorias_padrao": config.get("categorias_padrao", CATEGORIAS_PADRAO_BASE.copy()),
+            "renda_por_mes": config.get("renda_por_mes", {}),
+            "metas_orcamento": config.get("metas_orcamento", {})
+        }
+        for g in result["guias_extras"]:
+            result[f"dados_{g}"] = dict_guias.get(g, [])
+
+        return result, migrado_agora
+
+    # --- NOVO SISTEMA DE BANCO DE DADOS (Escrita Relacional) ---
     def salvar_dados_nuvem():
+        db_conn = ligar_google_sheets()
+        
+        # 1. Atualizar state com o mês atual antes de extrair
         chave = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
         casuais_save = st.session_state.gastos_casuais.copy()
         if "Data" in casuais_save.columns:
@@ -70,24 +161,57 @@ if check_password():
         st.session_state.historico_casuais[chave] = casuais_save.to_dict("records")
         st.session_state.renda_por_mes[chave] = st.session_state.renda_detalhada.to_dict("records")
         
-        dados = {
-            "renda_por_mes": st.session_state.renda_por_mes,
-            "guias_extras": st.session_state.guias_extras,
-            "historico_fixos": st.session_state.historico_fixos,
-            "historico_casuais": st.session_state.historico_casuais,
-            "categorias_personalizadas": st.session_state.categorias_personalizadas,
-            "categorias_padrao": st.session_state.categorias_padrao,
-            "metas_orcamento": st.session_state.metas_orcamento
-        }
+        # Colocar guias no formato cru no state para salvar
         for g in st.session_state.guias_extras:
             if f"dados_{g}" in st.session_state:
-                dados[f"dados_{g}"] = st.session_state[f"dados_{g}"].to_dict("records")
-        worksheet.update(values=[[json.dumps(dados, default=str)]], range_name='A1')
-        st.toast("💾 Sincronizado!", icon="✅")
+                st.session_state[f"dados_raw_{g}"] = st.session_state[f"dados_{g}"].to_dict("records")
 
-    def carregar_dados_nuvem_raw():
-        val = worksheet.acell('A1').value
-        return json.loads(val) if val else {}
+        # 2. Achatar os dicionários para linhas planas (Rows)
+        flat_casuais = [["Mes_Ano", "Data", "Categoria", "Descrição", "Valor"]]
+        for ma, itens in st.session_state.historico_casuais.items():
+            for item in itens:
+                flat_casuais.append([ma, str(item.get("Data","")), str(item.get("Categoria","")), str(item.get("Descrição","")), float(item.get("Valor (R$)",0))])
+                
+        flat_fixos = [["Mes_Ano", "Descrição", "Categoria", "Valor", "Pago"]]
+        for ma, itens in st.session_state.historico_fixos.items():
+            for item in itens:
+                flat_fixos.append([ma, str(item.get("Descrição","")), str(item.get("Categoria","")), float(item.get("Valor (R$)",0)), bool(item.get("Pago",False))])
+                
+        flat_guias = [["Guia", "Descrição", "Categoria", "Valor Parcela", "Mês Início", "Ano Início", "Qtd Parcelas"]]
+        for g in st.session_state.guias_extras:
+            itens = st.session_state.get(f"dados_raw_{g}", [])
+            for item in itens:
+                flat_guias.append([str(g), str(item.get("Descrição","")), str(item.get("Categoria","")), float(item.get("Valor Parcela (R$)",0)), int(item.get("Mês Início (1-12)",1)), int(item.get("Ano Início",2026)), int(item.get("Qtd Parcelas",1))])
+
+        config_json = {
+            "guias_extras": st.session_state.guias_extras,
+            "categorias_personalizadas": st.session_state.categorias_personalizadas,
+            "categorias_padrao": st.session_state.categorias_padrao,
+            "renda_por_mes": st.session_state.renda_por_mes,
+            "metas_orcamento": st.session_state.metas_orcamento
+        }
+
+        # 3. Reescrever as abas com os dados estruturados
+        ws_casuais = db_conn.worksheet("Casuais")
+        ws_casuais.clear()
+        ws_casuais.update(values=flat_casuais, range_name='A1')
+        
+        ws_fixos = db_conn.worksheet("Fixos")
+        ws_fixos.clear()
+        ws_fixos.update(values=flat_fixos, range_name='A1')
+        
+        ws_guias = db_conn.worksheet("Guias")
+        ws_guias.clear()
+        if len(flat_guias) > 1:
+            ws_guias.update(values=flat_guias, range_name='A1')
+        else:
+            ws_guias.update(values=[flat_guias[0]], range_name='A1')
+            
+        ws_config = db_conn.worksheet("Configuracoes")
+        ws_config.clear()
+        ws_config.update(values=[[json.dumps(config_json, default=str)]], range_name='A1')
+
+        st.toast("💾 Base de Dados Sincronizada!", icon="✅")
 
     def carregar_dados_sessao(importar_do_anterior=False):
         chave_atual = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
@@ -124,6 +248,11 @@ if check_password():
             st.session_state.renda_detalhada = pd.DataFrame(renda_data)
         else:
             st.session_state.renda_detalhada = pd.DataFrame([{"Fonte":"Salário","Valor (R$)":0.0}])
+
+    def obter_mes_anterior(mes_nome, ano_atual):
+        lista = list(MESES.keys())
+        idx = lista.index(mes_nome)
+        return (lista[idx-1], ano_atual) if idx>0 else ("Dezembro", ano_atual-1)
 
     def recalcular_media_casuais(anos_meses):
         valores = []
@@ -260,9 +389,11 @@ if check_password():
         os.remove(temp_path)
         return pdf_data
 
-    # --- INICIALIZAÇÃO ---
+    # --- INICIALIZAÇÃO E GATILHO DA MIGRAÇÃO ---
     if "dados_carregados" not in st.session_state:
-        dados_raw = carregar_dados_nuvem_raw()
+        with st.spinner("Sincronizando com Banco de Dados..."):
+            dados_raw, migrado_agora = carregar_dados_nuvem_raw()
+            
         hj = datetime.now()
         st.session_state.ano_atual = hj.year
         st.session_state.mes_atual = list(MESES.keys())[hj.month-1]
@@ -286,8 +417,14 @@ if check_password():
             st.session_state[f"dados_{g}"] = pd.DataFrame(dados_g)
             if st.session_state[f"dados_{g}"].empty:
                 st.session_state[f"dados_{g}"] = pd.DataFrame(columns=["Descrição","Valor Parcela (R$)","Mês Início (1-12)","Ano Início","Qtd Parcelas","Categoria"])
+        
         carregar_dados_sessao()
         st.session_state.dados_carregados = True
+        
+        # O Ponto Alto: Se a app acabou de montar as abas, ela preenche os dados automaticamente!
+        if migrado_agora:
+            salvar_dados_nuvem()
+            st.success("✅ O seu Banco de Dados foi migrado com sucesso para a arquitetura multi-abas!")
 
     if "pdf_ready" not in st.session_state: st.session_state.pdf_ready = False
     if "pdf_data" not in st.session_state: st.session_state.pdf_data = None
@@ -299,16 +436,16 @@ if check_password():
     with st.sidebar:
         st.header("⚙️ Configurações")
         if st.button("🔄 Recarregar Nuvem"):
-            novos_dados = carregar_dados_nuvem_raw()
-            st.session_state.guias_extras = novos_dados.get("guias_extras", [])
-            st.session_state.historico_fixos = novos_dados.get("historico_fixos", {})
-            st.session_state.historico_casuais = novos_dados.get("historico_casuais", {})
-            st.session_state.renda_por_mes = novos_dados.get("renda_por_mes", {})
-            st.session_state.categorias_personalizadas = novos_dados.get("categorias_personalizadas", [])
-            st.session_state.categorias_padrao = novos_dados.get("categorias_padrao", CATEGORIAS_PADRAO_BASE.copy())
-            st.session_state.metas_orcamento = novos_dados.get("metas_orcamento", {})
+            dados_raw, _ = carregar_dados_nuvem_raw()
+            st.session_state.guias_extras = dados_raw.get("guias_extras", [])
+            st.session_state.historico_fixos = dados_raw.get("historico_fixos", {})
+            st.session_state.historico_casuais = dados_raw.get("historico_casuais", {})
+            st.session_state.renda_por_mes = dados_raw.get("renda_por_mes", {})
+            st.session_state.categorias_personalizadas = dados_raw.get("categorias_personalizadas", [])
+            st.session_state.categorias_padrao = dados_raw.get("categorias_padrao", CATEGORIAS_PADRAO_BASE.copy())
+            st.session_state.metas_orcamento = dados_raw.get("metas_orcamento", {})
             for g in st.session_state.guias_extras:
-                st.session_state[f"dados_{g}"] = pd.DataFrame(novos_dados.get(f"dados_{g}", []))
+                st.session_state[f"dados_{g}"] = pd.DataFrame(dados_raw.get(f"dados_{g}", []))
             carregar_dados_sessao()
             st.rerun()
 
@@ -717,7 +854,6 @@ if check_password():
             st.dataframe(df_parc, use_container_width=True, hide_index=True)
         st.divider()
         
-        # --- NOVO: FORMULÁRIO DE LANÇAMENTO RÁPIDO PARA AS GUIAS ---
         with st.expander(f"➕ Novo Lançamento em {sel}", expanded=False):
             with st.form(f"form_nova_guia_{sel}"):
                 c1, c2 = st.columns(2)

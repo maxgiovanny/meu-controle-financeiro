@@ -44,14 +44,29 @@ def check_password():
 if check_password():
     st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="centered")
 
-    # --- VERIFICAÇÃO DA CHAVE GEMINI (usando google.generativeai) ---
+       # --- VERIFICAÇÃO DA CHAVE GEMINI (com detecção de modelo disponível) ---
     gemini_ok = False
+    client = None
+    modelo_usado = None
+    
     if GEMINI_DISPONIVEL and "GEMINI_API_KEY" in st.secrets:
         try:
             genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-            # Testa um modelo disponível
-            client = genai.GenerativeModel('gemini-1.5-flash')
-            gemini_ok = True
+            # Lista de possíveis modelos para testar
+            modelos_teste = ["gemini-1.5-flash", "gemini-pro", "gemini-1.5-pro", "gemini-2.0-flash-exp"]
+            for modelo in modelos_teste:
+                try:
+                    test_client = genai.GenerativeModel(modelo)
+                    # Teste rápido
+                    test_client.generate_content("Ok")
+                    client = test_client
+                    modelo_usado = modelo
+                    gemini_ok = True
+                    break
+                except:
+                    continue
+            if not gemini_ok:
+                st.warning("Nenhum modelo Gemini disponível. IA desativada.")
         except Exception as e:
             st.warning(f"Erro ao inicializar Gemini: {e}")
     elif not GEMINI_DISPONIVEL:
@@ -492,40 +507,33 @@ if check_password():
         return pdf_data
 
     # --- FUNÇÕES DE IA (GEMINI) - USANDO google.generativeai ---
-    @st.cache_data(ttl=3600)
     def analise_financeira_gemini(renda_total, despesa_total, sobra, gastos_categoria):
-        if not gemini_ok:
-            return "IA não disponível. Verifique a chave da API ou a instalação da biblioteca."
+        if not gemini_ok or client is None:
+            return "IA não disponível. Verifique a chave da API ou a instalação."
         top_categorias = sorted(gastos_categoria.items(), key=lambda x: x[1], reverse=True)[:3]
         texto_categorias = ", ".join([f"{cat} (R$ {val:,.2f})" for cat, val in top_categorias])
         prompt = f"""
-        Você é um assistente financeiro pessoal. Analise os seguintes dados do mês:
-        - Renda total: R$ {renda_total:,.2f}
-        - Despesa total: R$ {despesa_total:,.2f}
-        - Sobra (renda - despesas): R$ {sobra:,.2f}
-        - Maiores categorias de gasto: {texto_categorias}
-        Forneça um breve feedback (máximo 80 palavras) com uma análise e uma dica prática.
-        Seja encorajador e direto.
+        Renda: R$ {renda_total:.2f}
+        Despesas: R$ {despesa_total:.2f}
+        Sobra: R$ {sobra:.2f}
+        Top categorias: {texto_categorias}
+        Feedback curto (max 80 palavras) e dica prática.
         """
         try:
             response = client.generate_content(prompt)
             return response.text
         except Exception as e:
             if "429" in str(e):
-                return "⚠️ O limite de consultas gratuitas foi atingido. Aguarde 1 minuto e tente novamente."
+                return "⚠️ Limite de consultas atingido. Aguarde 1 minuto."
             return f"Erro na IA: {e}"
 
-    @st.cache_data(ttl=86400)
-    def sugerir_categoria_gemini(descricao):
-        if not gemini_ok:
+        def sugerir_categoria_gemini(descricao):
+        if not gemini_ok or client is None:
             return "Outros"
         categorias_disponiveis = get_categorias()
         prompt = f"""
-        Com base na descrição da despesa, sugira a categoria mais adequada.
-        Categorias possíveis: {', '.join(categorias_disponiveis)}.
-        Responda APENAS com o nome da categoria.
-        Descrição: "{descricao}"
-        Categoria sugerida:
+        Categoria para: "{descricao}". Opções: {', '.join(categorias_disponiveis)}.
+        Responda só com o nome da categoria.
         """
         try:
             response = client.generate_content(prompt)

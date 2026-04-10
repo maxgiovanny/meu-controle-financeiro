@@ -1090,21 +1090,18 @@ if check_password():
         st.divider()
         
         with st.expander(f"➕ Novo Lançamento em {sel}", expanded=False):
-            desc_temp = st.text_input("Descrição para sugestão:", key=f"desc_sugestao_{sel}")
-            if st.button("✨ Sugerir categoria", key=f"sugerir_guia_{sel}"):
-                if desc_temp and gemini_ok:
-                    with st.spinner("IA pensando..."):
-                        sugestao = sugerir_categoria_gemini(desc_temp)
-                        st.success(f"Sugestão: **{sugestao}**")
+            # 1. Formulário de Registro (Sempre no topo)
             with st.form(f"form_nova_guia_{sel}"):
                 c1, c2 = st.columns(2)
                 n_desc = c1.text_input("Descrição da Compra")
                 n_cat = c2.selectbox("Categoria", get_categorias())
+                
                 c3, c4, c5, c6 = st.columns(4)
                 n_val = c3.number_input("Valor Parcela (R$)", min_value=0.0, format="%.2f")
                 n_qtd = c4.number_input("Qtd Parcelas", min_value=1, step=1, value=1)
                 n_mes_ini = c5.number_input("Mês Início", min_value=1, max_value=12, step=1, value=mes_n)
                 n_ano_ini = c6.number_input("Ano Início", min_value=2000, max_value=2050, step=1, value=ano_r)
+                
                 if st.form_submit_button("Guardar Lançamento"):
                     if n_desc:
                         nova_linha = pd.DataFrame([{
@@ -1121,6 +1118,15 @@ if check_password():
                         st.rerun()
                     else:
                         st.warning("Por favor, preencha a descrição.")
+
+            # 2. Ferramenta de IA (Agora posicionada abaixo do botão de guardar)
+            st.divider()
+            desc_temp = st.text_input("Dúvida na categoria? Digite a descrição para sugestão:", key=f"desc_sugestao_{sel}")
+            if st.button("✨ Sugerir categoria via IA", key=f"sugerir_guia_{sel}"):
+                if desc_temp and gemini_ok:
+                    with st.spinner("IA analisando..."):
+                        sugestao = sugerir_categoria_gemini(desc_temp)
+                        st.info(f"Sugestão da IA: **{sugestao}**")
 
         st.write("**Base de Lançamentos (parcelas):**")
         de = st.data_editor(

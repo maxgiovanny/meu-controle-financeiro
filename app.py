@@ -44,29 +44,22 @@ def check_password():
 if check_password():
     st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="centered")
 
-          # --- VERIFICAÇÃO E INICIALIZAÇÃO DO GEMINI (modelo gemini-1.5-pro) ---
+   # --- VERIFICAÇÃO E INICIALIZAÇÃO DO GEMINI ---
     gemini_ok = False
     client = None
 
     if GEMINI_DISPONIVEL and "GEMINI_API_KEY" in st.secrets:
         try:
             genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-            # Usar gemini-1.5-pro (amplamente suportado)
-            client = genai.GenerativeModel('gemini-1.5-pro')
-            # Teste rápido
-            test_response = client.generate_content("OK")
-            if test_response.text:
-                gemini_ok = True
-                st.success("✅ Gemini conectado com sucesso!")
-            else:
-                st.warning("Gemini respondeu, mas algo está errado. IA pode estar limitada.")
+            # Usando o 1.5-flash, que é o mais rápido e tem cota gratuita generosa
+            client = genai.GenerativeModel('gemini-1.5-flash')
+            gemini_ok = True
         except Exception as e:
-            st.error(f"Erro ao conectar com Gemini: {e}")
-            st.info("Verifique se a chave API está correta e se o faturamento está ativo (o nível gratuito funciona).")
+            st.error(f"Erro ao configurar Gemini: {e}")
     elif not GEMINI_DISPONIVEL:
         st.error("Biblioteca 'google-generativeai' não encontrada. Instale com: pip install google-generativeai")
     elif "GEMINI_API_KEY" not in st.secrets:
-        st.error("Chave GEMINI_API_KEY não encontrada nos secrets. Adicione-a no Streamlit Cloud.")
+        st.error("Chave GEMINI_API_KEY não encontrada nos secrets.")
 
     # Se ainda não conseguiu, tenta gemini-pro (fallback)
     if not gemini_ok and GEMINI_DISPONIVEL and "GEMINI_API_KEY" in st.secrets:
@@ -512,7 +505,9 @@ if check_password():
         os.remove(temp_path)
         return pdf_data
 
-    # --- FUNÇÕES DE IA (GEMINI) - USANDO google.generativeai ---
+# --- FUNÇÕES DE IA (GEMINI) - USANDO google.generativeai ---
+    
+    @st.cache_data(ttl=3600) # Salva a análise por 1 hora
     def analise_financeira_gemini(renda_total, despesa_total, sobra, gastos_categoria):
         if not gemini_ok or client is None:
             return "IA não disponível. Verifique a chave da API ou a instalação."
@@ -533,6 +528,7 @@ if check_password():
                 return "⚠️ Limite de consultas atingido. Aguarde 1 minuto."
             return f"Erro na IA: {e}"
 
+    @st.cache_data(ttl=86400) # Salva a sugestão por 24 horas
     def sugerir_categoria_gemini(descricao):
         if not gemini_ok or client is None:
             return "Outros"
@@ -546,7 +542,7 @@ if check_password():
             return response.text.strip()
         except Exception as e:
             return "Outros"
-
+        
     # --- INICIALIZAÇÃO ---
     if "dados_carregados" not in st.session_state:
         with st.spinner("Carregando dados da nuvem..."):

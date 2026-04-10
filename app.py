@@ -492,7 +492,26 @@ if check_password():
         return pdf_data
 
 # --- FUNÇÕES DE IA (GEMINI) ---
+    
+    # 1. Funções internas (O Cache só guarda se der certo)
     @st.cache_data(ttl=3600)
+    def api_analise_gemini(prompt_text):
+        # Usando o 1.5-flash que é mais estável no gratuito
+        resposta = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=prompt_text
+        )
+        return resposta.text
+
+    @st.cache_data(ttl=86400)
+    def api_sugestao_gemini(prompt_text):
+        resposta = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=prompt_text
+        )
+        return resposta.text.strip()
+
+    # 2. Funções do aplicativo (Tratam o erro sem memorizá-lo)
     def analise_financeira_gemini(renda_total, despesa_total, sobra, gastos_categoria):
         if not gemini_ok or client is None:
             return "IA não disponível. Verifique a chave."
@@ -508,17 +527,12 @@ if check_password():
         Feedback curto (max 80 palavras) e dica prática.
         """
         try:
-            resposta = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=prompt
-            )
-            return resposta.text
+            return api_analise_gemini(prompt)
         except Exception as e:
-            if "429" in str(e):
-                return "⚠️ Limite de consultas gratuito atingido. Aguarde 1 minuto."
+            if "429" in str(e) or "quota" in str(e).lower():
+                return "⚠️ O limite gratuito foi atingido. Aguarde cerca de 1 minuto e tente novamente."
             return f"Erro na IA: {e}"
 
-    @st.cache_data(ttl=86400)
     def sugerir_categoria_gemini(descricao):
         if not gemini_ok or client is None:
             return "Outros"
@@ -529,11 +543,7 @@ if check_password():
         Responda só com o nome da categoria.
         """
         try:
-            resposta = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=prompt
-            )
-            return resposta.text.strip()
+            return api_sugestao_gemini(prompt)
         except Exception as e:
             return "Outros"
         

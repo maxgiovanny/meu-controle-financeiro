@@ -10,7 +10,13 @@ from fpdf import FPDF
 import unicodedata
 import tempfile
 import os
-import io
+
+# --- TENTAR IMPORTAR GEMINI ---
+try:
+    from google import genai
+    GEMINI_DISPONIVEL = True
+except ImportError:
+    GEMINI_DISPONIVEL = False
 
 # --- 1. FUNÇÃO DE SEGURANÇA (LOGIN) ---
 def check_password():
@@ -37,11 +43,25 @@ def check_password():
 if check_password():
     st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="centered")
 
+    # --- VERIFICAÇÃO DA CHAVE GEMINI ---
+    gemini_ok = False
+    if GEMINI_DISPONIVEL and "GEMINI_API_KEY" in st.secrets:
+        try:
+            client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+            gemini_ok = True
+        except Exception as e:
+            st.warning(f"Erro ao inicializar Gemini: {e}")
+    elif not GEMINI_DISPONIVEL:
+        st.warning("Biblioteca 'google-genai' não instalada. IA desativada.")
+    elif "GEMINI_API_KEY" not in st.secrets:
+        st.warning("Chave GEMINI_API_KEY não encontrada nos secrets. IA desativada.")
+
+    # --- CONSTANTES ---
     MESES = {"Janeiro":1,"Fevereiro":2,"Março":3,"Abril":4,"Maio":5,"Junho":6,
              "Julho":7,"Agosto":8,"Setembro":9,"Outubro":10,"Novembro":11,"Dezembro":12}
     CATEGORIAS_PADRAO_BASE = ["Alimentação","Transporte","Lazer","Saúde","Casa","Trabalho","Outros"]
 
-    # --- FUNÇÕES SUPER SEGURAS DE LIMPEZA DE DADOS ---
+    # --- FUNÇÕES SEGURAS DE LIMPEZA ---
     def safe_float(val, default=0.0):
         try:
             if pd.isna(val): return default
@@ -70,7 +90,7 @@ if check_password():
             return str(val).strip().lower() in ['true', '1', 't', 'y', 'yes']
         except: return False
 
-    # --- NOVA CONEXÃO GOOGLE SHEETS ---
+    # --- CONEXÃO GOOGLE SHEETS ---
     @st.cache_resource
     def ligar_google_sheets():
         creds_dict = json.loads(st.secrets["gcp_service_account"])
@@ -78,110 +98,99 @@ if check_password():
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return gspread.authorize(creds).open_by_url(st.secrets["url_planilha"])
 
-    try:
-        db = ligar_google_sheets()
-    except Exception as e:
-        st.error(f"Erro de conexão com a nuvem. Verifique a planilha e a chave. Erro: {e}")
-        st.stop()
-
-    # --- SISTEMA DE BANCO DE DADOS INTELIGENTE (Com Auto-Reparação) ---
+    # --- LEITURA CORRIGIDA DAS ABAS (USANDO get_all_values) ---
     def carregar_dados_nuvem_raw():
         db_conn = ligar_google_sheets()
-        migrado_agora = False
-        precisa_migrar = False
-        
-        # 1. TESTAR SE A MIGRAÇÃO ANTERIOR FOI FEITA CORRETAMENTE
         try:
+            ws_casuais = db_conn.worksheet("Casuais")
+            ws_fixos = db_conn.worksheet("Fixos")
+            ws_guias = db_conn.worksheet("Guias")
             ws_config = db_conn.worksheet("Configuracoes")
-            val_conf = ws_config.acell('A1').value
-            if not val_conf or len(val_conf.strip()) < 5:
-                precisa_migrar = True
-        except gspread.exceptions.WorksheetNotFound:
-            precisa_migrar = True
-            
-        # 2. MOTOR DE MIGRAÇÃO
-        if precisa_migrar:
-            migrado_agora = True
-            
-            for aba in ["Casuais", "Fixos", "Guias", "Configuracoes"]:
-                try:
-                    t = db_conn.worksheet(aba)
-                    db_conn.del_worksheet(t)
-                except:
-                    pass
-            
-            try:
-                ws_original = db_conn.worksheet("Backup_Antigo")
-            except gspread.exceptions.WorksheetNotFound:
-                try:
-                    ws_original = db_conn.worksheet("Página 1")
-                except gspread.exceptions.WorksheetNotFound:
-                    ws_original = db_conn.sheet1
-            
-            val = ws_original.acell('A1').value
-            dados_antigos = json.loads(val) if val else {}
-            
-            db_conn.add_worksheet("Casuais", rows=1000, cols=5)
-            db_conn.add_worksheet("Fixos", rows=1000, cols=5)
-            db_conn.add_worksheet("Guias", rows=1000, cols=7)
-            db_conn.add_worksheet("Configuracoes", rows=100, cols=2)
-            
-            if ws_original.title != "Backup_Antigo":
-                try: ws_original.update_title("Backup_Antigo")
-                except: pass 
-                
-            return dados_antigos, migrado_agora
+        except gspread.exceptions.WorksheetNotFound as e:
+            st.error(f"Erro: Aba '{e}' não encontrada. Verifique a planilha.")
+            return {
+                "historico_casuais": {},
+                "historico_fixos": {},
+                "guias_extras": [],
+                "categorias_personalizadas": [],
+                "categorias_padrao": CATEGORIAS_PADRAO_BASE.copy(),
+                "renda_por_mes": {},
+                "metas_orcamento": {}
+            }, False
 
-        # 3. LEITURA NORMAL
-        ws_casuais = db_conn.worksheet("Casuais")
-        ws_fixos = db_conn.worksheet("Fixos")
-        ws_guias = db_conn.worksheet("Guias")
-        ws_config = db_conn.worksheet("Configuracoes")
+        # Lê todas as linhas (incluindo cabeçalho)
+        all_casuais = ws_casuais.get_all_values()
+        all_fixos = ws_fixos.get_all_values()
+        all_guias = ws_guias.get_all_values()
+        config_val = ws_config.acell('A1').value
 
-        dados_casuais = ws_casuais.get_all_records()
+        # Processa Casuais
         hist_casuais = {}
-        for row in dados_casuais:
-            ma = str(row.get("Mes_Ano", ""))
-            if not ma: continue
-            if ma not in hist_casuais: hist_casuais[ma] = []
-            hist_casuais[ma].append({
-                "Data": str(row.get("Data", "")),
-                "Categoria": str(row.get("Categoria", "")),
-                "Descrição": str(row.get("Descrição", "")),
-                "Valor (R$)": safe_float(row.get("Valor", 0))
-            })
+        if len(all_casuais) > 1:
+            for row in all_casuais[1:]:
+                if len(row) < 5: continue
+                mes_ano = safe_str(row[0])
+                if not mes_ano: continue
+                data = safe_str(row[1])
+                categoria = safe_str(row[2])
+                descricao = safe_str(row[3])
+                valor = safe_float(row[4])
+                if mes_ano not in hist_casuais:
+                    hist_casuais[mes_ano] = []
+                hist_casuais[mes_ano].append({
+                    "Data": data,
+                    "Categoria": categoria,
+                    "Descrição": descricao,
+                    "Valor (R$)": valor
+                })
 
-        dados_fixos = ws_fixos.get_all_records()
+        # Processa Fixos
         hist_fixos = {}
-        for row in dados_fixos:
-            ma = str(row.get("Mes_Ano", ""))
-            if not ma: continue
-            if ma not in hist_fixos: hist_fixos[ma] = []
-            hist_fixos[ma].append({
-                "Descrição": str(row.get("Descrição", "")),
-                "Categoria": str(row.get("Categoria", "")),
-                "Valor (R$)": safe_float(row.get("Valor", 0)),
-                "Pago": str(row.get("Pago", "")).strip().lower() == 'true'
-            })
+        if len(all_fixos) > 1:
+            for row in all_fixos[1:]:
+                if len(row) < 5: continue
+                mes_ano = safe_str(row[0])
+                if not mes_ano: continue
+                descricao = safe_str(row[1])
+                categoria = safe_str(row[2])
+                valor = safe_float(row[3])
+                pago = safe_bool(row[4])
+                if mes_ano not in hist_fixos:
+                    hist_fixos[mes_ano] = []
+                hist_fixos[mes_ano].append({
+                    "Descrição": descricao,
+                    "Categoria": categoria,
+                    "Valor (R$)": valor,
+                    "Pago": pago
+                })
 
-        dados_guias = ws_guias.get_all_records()
+        # Processa Guias
         dict_guias = {}
-        for row in dados_guias:
-            g = str(row.get("Guia", ""))
-            if not g: continue
-            if g not in dict_guias: dict_guias[g] = []
-            dict_guias[g].append({
-                "Descrição": str(row.get("Descrição", "")),
-                "Categoria": str(row.get("Categoria", "")),
-                "Valor Parcela (R$)": safe_float(row.get("Valor Parcela", 0)),
-                "Mês Início (1-12)": safe_int(row.get("Mês Início", 1)),
-                "Ano Início": safe_int(row.get("Ano Início", 2026)),
-                "Qtd Parcelas": safe_int(row.get("Qtd Parcelas", 1))
-            })
+        if len(all_guias) > 1:
+            for row in all_guias[1:]:
+                if len(row) < 7: continue
+                guia = safe_str(row[0])
+                if not guia: continue
+                descricao = safe_str(row[1])
+                categoria = safe_str(row[2])
+                valor_parcela = safe_float(row[3])
+                mes_ini = safe_int(row[4], 1)
+                ano_ini = safe_int(row[5], 2026)
+                qtd = safe_int(row[6], 1)
+                if guia not in dict_guias:
+                    dict_guias[guia] = []
+                dict_guias[guia].append({
+                    "Descrição": descricao,
+                    "Categoria": categoria,
+                    "Valor Parcela (R$)": valor_parcela,
+                    "Mês Início (1-12)": mes_ini,
+                    "Ano Início": ano_ini,
+                    "Qtd Parcelas": qtd
+                })
 
-        val_conf = ws_config.acell('A1').value
+        # Configurações
         try:
-            config = json.loads(val_conf) if val_conf else {}
+            config = json.loads(config_val) if config_val else {}
         except:
             config = {}
 
@@ -197,12 +206,18 @@ if check_password():
         for g in result["guias_extras"]:
             result[f"dados_{g}"] = dict_guias.get(g, [])
 
-        return result, migrado_agora
+        return result, False
 
-    # --- SISTEMA DE BANCO DE DADOS (Escrita Segura Total) ---
+    # --- ESCRITA SEGURA ---
     def salvar_dados_nuvem():
         db_conn = ligar_google_sheets()
-        
+
+        total_fixos = sum(item.get("Valor (R$)", 0) for lista in st.session_state.historico_fixos.values() for item in lista)
+        total_casuais = sum(item.get("Valor (R$)", 0) for lista in st.session_state.historico_casuais.values() for item in lista)
+        if total_fixos == 0 and total_casuais == 0 and len(st.session_state.guias_extras) == 0:
+            st.error("⚠️ Tentativa de salvar dados vazios! Operação cancelada.")
+            return
+
         chave = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
         casuais_save = st.session_state.gastos_casuais.copy()
         if "Data" in casuais_save.columns:
@@ -211,32 +226,33 @@ if check_password():
         st.session_state.historico_fixos[chave] = st.session_state.gastos_fixos.to_dict("records")
         st.session_state.historico_casuais[chave] = casuais_save.to_dict("records")
         st.session_state.renda_por_mes[chave] = st.session_state.renda_detalhada.to_dict("records")
-        
+
         for g in st.session_state.guias_extras:
             if f"dados_{g}" in st.session_state:
                 st.session_state[f"dados_raw_{g}"] = st.session_state[f"dados_{g}"].to_dict("records")
 
+        # Preparar dados planos
         flat_casuais = [["Mes_Ano", "Data", "Categoria", "Descrição", "Valor"]]
         for ma, itens in st.session_state.historico_casuais.items():
             for item in itens:
                 flat_casuais.append([safe_str(ma), safe_str(item.get("Data","")), safe_str(item.get("Categoria","")), safe_str(item.get("Descrição","")), safe_float(item.get("Valor (R$)"), 0.0)])
-                
+
         flat_fixos = [["Mes_Ano", "Descrição", "Categoria", "Valor", "Pago"]]
         for ma, itens in st.session_state.historico_fixos.items():
             for item in itens:
                 flat_fixos.append([safe_str(ma), safe_str(item.get("Descrição","")), safe_str(item.get("Categoria","")), safe_float(item.get("Valor (R$)"), 0.0), safe_bool(item.get("Pago",False))])
-                
+
         flat_guias = [["Guia", "Descrição", "Categoria", "Valor Parcela", "Mês Início", "Ano Início", "Qtd Parcelas"]]
         for g in st.session_state.guias_extras:
             itens = st.session_state.get(f"dados_raw_{g}", [])
             for item in itens:
                 flat_guias.append([
-                    safe_str(g), 
-                    safe_str(item.get("Descrição","")), 
-                    safe_str(item.get("Categoria","")), 
-                    safe_float(item.get("Valor Parcela (R$)"), 0.0), 
-                    safe_int(item.get("Mês Início (1-12)"), 1), 
-                    safe_int(item.get("Ano Início"), 2026), 
+                    safe_str(g),
+                    safe_str(item.get("Descrição","")),
+                    safe_str(item.get("Categoria","")),
+                    safe_float(item.get("Valor Parcela (R$)"), 0.0),
+                    safe_int(item.get("Mês Início (1-12)"), 1),
+                    safe_int(item.get("Ano Início"), 2026),
                     safe_int(item.get("Qtd Parcelas"), 1)
                 ])
 
@@ -255,23 +271,29 @@ if check_password():
         ws_casuais = db_conn.worksheet("Casuais")
         ws_casuais.clear()
         ws_casuais.update(values=flat_casuais, range_name='A1')
-        
+
         ws_fixos = db_conn.worksheet("Fixos")
         ws_fixos.clear()
         ws_fixos.update(values=flat_fixos, range_name='A1')
-        
+
         ws_guias = db_conn.worksheet("Guias")
         ws_guias.clear()
         if len(flat_guias) > 1:
             ws_guias.update(values=flat_guias, range_name='A1')
         else:
             ws_guias.update(values=[flat_guias[0]], range_name='A1')
-            
+
         ws_config = db_conn.worksheet("Configuracoes")
         ws_config.clear()
         ws_config.update(values=[[json.dumps(config_json, default=str)]], range_name='A1')
 
-        st.toast("💾 Base de Dados Sincronizada!", icon="✅")
+        st.toast("💾 Dados salvos na nuvem!", icon="✅")
+
+    # --- DEMAIS FUNÇÕES AUXILIARES ---
+    def obter_mes_anterior(mes_nome, ano_atual):
+        lista = list(MESES.keys())
+        idx = lista.index(mes_nome)
+        return (lista[idx-1], ano_atual) if idx>0 else ("Dezembro", ano_atual-1)
 
     def carregar_dados_sessao(importar_do_anterior=False):
         chave_atual = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
@@ -308,11 +330,6 @@ if check_password():
             st.session_state.renda_detalhada = pd.DataFrame(renda_data)
         else:
             st.session_state.renda_detalhada = pd.DataFrame([{"Fonte":"Salário","Valor (R$)":0.0}])
-
-    def obter_mes_anterior(mes_nome, ano_atual):
-        lista = list(MESES.keys())
-        idx = lista.index(mes_nome)
-        return (lista[idx-1], ano_atual) if idx>0 else ("Dezembro", ano_atual-1)
 
     def recalcular_media_casuais(anos_meses):
         valores = []
@@ -388,7 +405,6 @@ if check_password():
                 elif tipo == "casuais":
                     d_str = row['Data'].strftime("%d/%m") if hasattr(row['Data'],'strftime') else str(row['Data'])[:5]
                     texto_esq = f"  {d_str} | {row.get('Categoria', '')} - {row.get('Descrição', '')}"
-
                 if len(texto_esq) > 85: texto_esq = texto_esq[:82] + "..."
                 pdf.cell(140, 6, remover_acentos(texto_esq), border='B')
                 pdf.cell(50, 6, formatar_moeda(row['Valor (R$)']), border='B', ln=True, align="R")
@@ -449,21 +465,66 @@ if check_password():
         os.remove(temp_path)
         return pdf_data
 
-    # --- INICIALIZAÇÃO E GATILHO DA MIGRAÇÃO ---
+    # --- FUNÇÕES DE IA (GEMINI) ---
+    def analise_financeira_gemini(renda_total, despesa_total, sobra, gastos_categoria):
+        if not gemini_ok:
+            return "IA não disponível. Verifique a chave da API ou a instalação da biblioteca."
+        top_categorias = sorted(gastos_categoria.items(), key=lambda x: x[1], reverse=True)[:3]
+        texto_categorias = ", ".join([f"{cat} (R$ {val:,.2f})" for cat, val in top_categorias])
+        prompt = f"""
+        Você é um assistente financeiro pessoal. Analise os seguintes dados do mês:
+        - Renda total: R$ {renda_total:,.2f}
+        - Despesa total: R$ {despesa_total:,.2f}
+        - Sobra (renda - despesas): R$ {sobra:,.2f}
+        - Maiores categorias de gasto: {texto_categorias}
+        Forneça um breve feedback (máximo 80 palavras) com uma análise e uma dica prática.
+        Seja encorajador e direto.
+        """
+        try:
+            resposta = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt,
+                config={'temperature': 0.7, 'max_output_tokens': 300}
+            )
+            return resposta.text
+        except Exception as e:
+            return f"Erro na IA: {e}"
+
+    def sugerir_categoria_gemini(descricao):
+        if not gemini_ok:
+            return "IA indisponível"
+        categorias_disponiveis = get_categorias()
+        prompt = f"""
+        Com base na descrição da despesa, sugira a categoria mais adequada.
+        Categorias possíveis: {', '.join(categorias_disponiveis)}.
+        Responda APENAS com o nome da categoria.
+        Descrição: "{descricao}"
+        Categoria sugerida:
+        """
+        try:
+            resposta = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt,
+                config={'temperature': 0.2, 'max_output_tokens': 20}
+            )
+            return resposta.text.strip()
+        except Exception as e:
+            return "Outros"
+
+    # --- INICIALIZAÇÃO ---
     if "dados_carregados" not in st.session_state:
-        with st.spinner("Analisando e Consertando Banco de Dados..."):
-            dados_raw, migrado_agora = carregar_dados_nuvem_raw()
-            
+        with st.spinner("Carregando dados da nuvem..."):
+            dados_raw, _ = carregar_dados_nuvem_raw()
         hj = datetime.now()
         st.session_state.ano_atual = hj.year
         st.session_state.mes_atual = list(MESES.keys())[hj.month-1]
 
-        st.session_state.guias_extras = dados_raw.get("guias_extras", [])
-        st.session_state.historico_fixos = dados_raw.get("historico_fixos", {})
         st.session_state.historico_casuais = dados_raw.get("historico_casuais", {})
-        st.session_state.renda_por_mes = dados_raw.get("renda_por_mes", {})
+        st.session_state.historico_fixos = dados_raw.get("historico_fixos", {})
+        st.session_state.guias_extras = dados_raw.get("guias_extras", [])
         st.session_state.categorias_personalizadas = dados_raw.get("categorias_personalizadas", [])
         st.session_state.categorias_padrao = dados_raw.get("categorias_padrao", CATEGORIAS_PADRAO_BASE.copy())
+        st.session_state.renda_por_mes = dados_raw.get("renda_por_mes", {})
         st.session_state.metas_orcamento = dados_raw.get("metas_orcamento", {})
 
         if len(st.session_state.categorias_padrao) != len(CATEGORIAS_PADRAO_BASE):
@@ -471,19 +532,21 @@ if check_password():
 
         for g in st.session_state.guias_extras:
             dados_g = dados_raw.get(f"dados_{g}", [])
-            if dados_g and isinstance(dados_g, list) and len(dados_g)>0:
-                if "Categoria" not in dados_g[0]:
-                    for item in dados_g: item["Categoria"] = "Outros"
             st.session_state[f"dados_{g}"] = pd.DataFrame(dados_g)
             if st.session_state[f"dados_{g}"].empty:
                 st.session_state[f"dados_{g}"] = pd.DataFrame(columns=["Descrição","Valor Parcela (R$)","Mês Início (1-12)","Ano Início","Qtd Parcelas","Categoria"])
-        
+
         carregar_dados_sessao()
         st.session_state.dados_carregados = True
-        
-        if migrado_agora:
-            salvar_dados_nuvem()
-            st.success("✅ Sistema Auto-Reparado: Os seus dados antigos foram resgatados e a migração foi concluída com sucesso!")
+
+        # Diagnóstico rápido (opcional)
+        with st.expander("🔧 Diagnóstico de carregamento (pode remover depois)"):
+            st.write(f"Total meses em fixos: {len(st.session_state.historico_fixos)}")
+            st.write(f"Total meses em casuais: {len(st.session_state.historico_casuais)}")
+            st.write(f"Mês atual: {st.session_state.mes_atual}_{st.session_state.ano_atual}")
+            st.write(f"Registros fixos carregados: {len(st.session_state.gastos_fixos)}")
+            st.write(f"Registros casuais carregados: {len(st.session_state.gastos_casuais)}")
+            st.write(f"Guias extras: {st.session_state.guias_extras}")
 
     if "pdf_ready" not in st.session_state: st.session_state.pdf_ready = False
     if "pdf_data" not in st.session_state: st.session_state.pdf_data = None
@@ -495,17 +558,11 @@ if check_password():
     with st.sidebar:
         st.header("⚙️ Configurações")
         if st.button("🔄 Recarregar Nuvem"):
-            dados_raw, _ = carregar_dados_nuvem_raw()
-            st.session_state.guias_extras = dados_raw.get("guias_extras", [])
-            st.session_state.historico_fixos = dados_raw.get("historico_fixos", {})
-            st.session_state.historico_casuais = dados_raw.get("historico_casuais", {})
-            st.session_state.renda_por_mes = dados_raw.get("renda_por_mes", {})
-            st.session_state.categorias_personalizadas = dados_raw.get("categorias_personalizadas", [])
-            st.session_state.categorias_padrao = dados_raw.get("categorias_padrao", CATEGORIAS_PADRAO_BASE.copy())
-            st.session_state.metas_orcamento = dados_raw.get("metas_orcamento", {})
-            for g in st.session_state.guias_extras:
-                st.session_state[f"dados_{g}"] = pd.DataFrame(dados_raw.get(f"dados_{g}", []))
-            carregar_dados_sessao()
+            # Força recarregamento completo
+            for key in ["dados_carregados", "historico_fixos", "historico_casuais", "guias_extras", 
+                        "categorias_personalizadas", "categorias_padrao", "renda_por_mes", "metas_orcamento"]:
+                if key in st.session_state:
+                    del st.session_state[key]
             st.rerun()
 
         m_sel = st.selectbox("Mês:", list(MESES.keys()), index=list(MESES.keys()).index(st.session_state.mes_atual))
@@ -559,7 +616,7 @@ if check_password():
                 use_container_width=True
             )
 
-        # SEÇÃO DE CATEGORIAS
+        # --- GERENCIAMENTO DE CATEGORIAS ---
         st.divider()
         st.subheader("🏷️ Gerenciar Categorias")
         with st.expander("⚙️ Opções de categorias"):
@@ -616,7 +673,7 @@ if check_password():
                             salvar_dados_nuvem()
                             st.rerun()
 
-        # SEÇÃO DE GUIAS
+        # --- GERENCIAMENTO DE GUIAS ---
         st.divider()
         st.subheader("🛠️ Gerenciar Guias")
         with st.expander("⚙️ Opções de gerenciamento"):
@@ -709,7 +766,6 @@ if check_password():
         st.subheader("📈 Evolução Financeira Anual")
         historico_df_dados = []
         chaves_todas = set(list(st.session_state.historico_fixos.keys()) + list(st.session_state.historico_casuais.keys()) + list(st.session_state.renda_por_mes.keys()))
-        
         if chaves_todas:
             for chave in chaves_todas:
                 try:
@@ -747,6 +803,12 @@ if check_password():
                 fig_hist = px.line(df_hist, x="Mês", y=["Renda", "Despesas", "Sobra"], markers=True)
                 st.plotly_chart(fig_hist, use_container_width=True)
 
+        st.divider()
+        if st.button("🤖 Análise da IA para este mês"):
+            with st.spinner("Consultando o Gemini..."):
+                analise = analise_financeira_gemini(total_renda, gt, sobra, gastos_categoria)
+            st.info(analise)
+
     elif sel == "Renda":
         st.subheader("💵 Fontes de Renda")
         er = st.data_editor(st.session_state.renda_detalhada, num_rows="dynamic", use_container_width=True, hide_index=True,
@@ -768,6 +830,12 @@ if check_password():
                 st.rerun()
 
         with st.expander("➕ Lançamento Rápido de Fixos", expanded=False):
+            desc_temp = st.text_input("Descrição para sugestão:", key="desc_sugestao_fixo")
+            if st.button("✨ Sugerir categoria", key="sugerir_fixo"):
+                if desc_temp and gemini_ok:
+                    with st.spinner("IA pensando..."):
+                        sugestao = sugerir_categoria_gemini(desc_temp)
+                        st.success(f"Sugestão: **{sugestao}**")
             with st.form("form_novo_fixo"):
                 c1, c2, c3 = st.columns([2, 1, 1])
                 n_desc = c1.text_input("Descrição do Gasto")
@@ -802,11 +870,17 @@ if check_password():
         st.subheader(f"Total no Mês: R$ {t_cas:,.2f}")
 
         with st.expander("➕ Lançamento Rápido do Dia a Dia", expanded=False):
+            desc_temp = st.text_input("Descrição para sugestão:", key="desc_sugestao_casual")
+            if st.button("✨ Sugerir categoria", key="sugerir_casual"):
+                if desc_temp and gemini_ok:
+                    with st.spinner("IA pensando..."):
+                        sugestao = sugerir_categoria_gemini(desc_temp)
+                        st.success(f"Sugestão: **{sugestao}**")
             with st.form("form_novo_casual"):
                 c1, c2 = st.columns(2)
                 n_data = c1.date_input("Data do Registo", datetime.now().date())
-                n_cat = c2.selectbox("Categoria", get_categorias())
                 n_desc = st.text_input("Descrição da Compra")
+                n_cat = c2.selectbox("Categoria", get_categorias())
                 n_val = st.number_input("Valor (R$)", min_value=0.0, format="%.2f")
                 if st.form_submit_button("Guardar Registo"):
                     if n_desc:
@@ -829,7 +903,6 @@ if check_password():
         st.subheader("🎯 Metas e Limites Mensais")
         st.write("Defina um orçamento para cada categoria e acompanhe seus gastos.")
         
-        # --- Formulário para adicionar nova meta (expansível) ---
         with st.expander("➕ Adicionar Nova Meta", expanded=False):
             with st.form("form_metas"):
                 todas_categorias = get_categorias()
@@ -845,8 +918,6 @@ if check_password():
                         st.warning("O valor deve ser maior que zero.")
         
         st.markdown("---")
-        
-        # --- Exibir metas existentes com botões de editar/excluir ---
         metas_ativas = st.session_state.metas_orcamento
         if not metas_ativas:
             st.info("Nenhuma meta definida. Use o formulário acima para criar seu primeiro orçamento.")
@@ -866,12 +937,10 @@ if check_password():
                     if perc >= 1.0:
                         st.error(f"⚠️ Excedido em R$ {gasto_atual - limite:.2f}")
                 with col3:
-                    # Botão editar
                     if st.button("✏️", key=f"edit_meta_{cat}"):
                         st.session_state.edit_meta_cat = cat
                         st.session_state.edit_meta_val = limite
                         st.rerun()
-                    # Botão excluir
                     if st.button("🗑️", key=f"del_meta_{cat}"):
                         del st.session_state.metas_orcamento[cat]
                         salvar_dados_nuvem()
@@ -879,7 +948,6 @@ if check_password():
                         st.rerun()
                 st.divider()
             
-            # --- Formulário de edição (aparece quando um botão editar é clicado) ---
             if "edit_meta_cat" in st.session_state:
                 with st.expander(f"✏️ Editando meta para {st.session_state.edit_meta_cat}", expanded=True):
                     with st.form("edit_meta_form"):
@@ -906,27 +974,22 @@ if check_password():
     elif sel == "Pesquisa Global":
         st.subheader("🔍 Procurar no Histórico")
         termo = st.text_input("Escreva uma palavra (Ex: Colchão, Amazon, Combustível, Médico):").strip().lower()
-        
         if termo:
             resultados = []
-            
             for chave, df_list in st.session_state.historico_fixos.items():
                 for row in df_list:
                     if termo in str(row.get('Descrição','')).lower() or termo in str(row.get('Categoria','')).lower():
                         resultados.append({"Referência": chave, "Tipo": "Despesa Fixa", "Data": "-", "Categoria": row.get('Categoria',''), "Descrição": row.get('Descrição',''), "Valor": f"R$ {row.get('Valor (R$)',0):.2f}"})
-                        
             for chave, df_list in st.session_state.historico_casuais.items():
                 for row in df_list:
                     if termo in str(row.get('Descrição','')).lower() or termo in str(row.get('Categoria','')).lower():
                         resultados.append({"Referência": chave, "Tipo": "Dia a Dia", "Data": row.get('Data','-'), "Categoria": row.get('Categoria',''), "Descrição": row.get('Descrição',''), "Valor": f"R$ {row.get('Valor (R$)',0):.2f}"})
-            
             for g in st.session_state.guias_extras:
                 df_g = st.session_state.get(f"dados_{g}")
                 if df_g is not None and not df_g.empty:
                     for _, row in df_g.iterrows():
                         if termo in str(row.get('Descrição','')).lower() or termo in str(row.get('Categoria','')).lower():
                             resultados.append({"Referência": f"Fatura: {g}", "Tipo": "Parcelamento", "Data": f"Mês {row.get('Mês Início (1-12)')}/{row.get('Ano Início')}", "Categoria": row.get('Categoria',''), "Descrição": row.get('Descrição',''), "Valor": f"R$ {row.get('Valor Parcela (R$)',0):.2f}"})
-            
             if resultados:
                 df_res = pd.DataFrame(resultados)
                 st.success(f"Foram encontrados {len(df_res)} registos em toda a sua conta!")
@@ -968,17 +1031,21 @@ if check_password():
         st.divider()
         
         with st.expander(f"➕ Novo Lançamento em {sel}", expanded=False):
+            desc_temp = st.text_input("Descrição para sugestão:", key=f"desc_sugestao_{sel}")
+            if st.button("✨ Sugerir categoria", key=f"sugerir_guia_{sel}"):
+                if desc_temp and gemini_ok:
+                    with st.spinner("IA pensando..."):
+                        sugestao = sugerir_categoria_gemini(desc_temp)
+                        st.success(f"Sugestão: **{sugestao}**")
             with st.form(f"form_nova_guia_{sel}"):
                 c1, c2 = st.columns(2)
                 n_desc = c1.text_input("Descrição da Compra")
                 n_cat = c2.selectbox("Categoria", get_categorias())
-                
                 c3, c4, c5, c6 = st.columns(4)
                 n_val = c3.number_input("Valor Parcela (R$)", min_value=0.0, format="%.2f")
                 n_qtd = c4.number_input("Qtd Parcelas", min_value=1, step=1, value=1)
                 n_mes_ini = c5.number_input("Mês Início", min_value=1, max_value=12, step=1, value=mes_n)
                 n_ano_ini = c6.number_input("Ano Início", min_value=2000, max_value=2050, step=1, value=ano_r)
-                
                 if st.form_submit_button("Guardar Lançamento"):
                     if n_desc:
                         nova_linha = pd.DataFrame([{

@@ -496,41 +496,61 @@ if check_password():
     # 1. Funções internas (O Cache só guarda se der certo)
     @st.cache_data(ttl=3600)
     def api_analise_gemini(prompt_text):
-        # Usando o 1.5-flash que é mais estável no gratuito
-        resposta = client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=prompt_text
-        )
-        return resposta.text
+        try:
+            # Tenta usar o modelo 2.5 Flash (que está no seu painel)
+            resposta = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt_text
+            )
+            return resposta.text
+        except Exception as e:
+            if "404" in str(e):
+                # Se o 2.5 der 404, cai automaticamente para o 2.0 Flash
+                resposta = client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=prompt_text
+                )
+                return resposta.text
+            raise e
 
     @st.cache_data(ttl=86400)
     def api_sugestao_gemini(prompt_text):
-        resposta = client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=prompt_text
-        )
-        return resposta.text.strip()
+        try:
+            resposta = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt_text
+            )
+            return resposta.text.strip()
+        except Exception as e:
+            if "404" in str(e):
+                resposta = client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=prompt_text
+                )
+                return resposta.text.strip()
+            raise e
 
-    # 2. Funções do aplicativo (Tratam o erro sem memorizá-lo)
+    # 2. Funções do aplicativo (Tratam erros de limite sem memorizá-los)
     def analise_financeira_gemini(renda_total, despesa_total, sobra, gastos_categoria):
         if not gemini_ok or client is None:
-            return "IA não disponível. Verifique a chave."
+            return "IA não disponível. Verifique a chave da API."
         
         top_categorias = sorted(gastos_categoria.items(), key=lambda x: x[1], reverse=True)[:3]
         texto_categorias = ", ".join([f"{cat} (R$ {val:,.2f})" for cat, val in top_categorias])
         
         prompt = f"""
+        Você é um assistente financeiro. Analise os dados do mês:
         Renda: R$ {renda_total:.2f}
         Despesas: R$ {despesa_total:.2f}
         Sobra: R$ {sobra:.2f}
         Top categorias: {texto_categorias}
-        Feedback curto (max 80 palavras) e dica prática.
+        Forneça um feedback curto (max 80 palavras) e uma dica prática direta.
         """
         try:
             return api_analise_gemini(prompt)
         except Exception as e:
             if "429" in str(e) or "quota" in str(e).lower():
-                return "⚠️ O limite gratuito foi atingido. Aguarde cerca de 1 minuto e tente novamente."
+                return "⚠️ O limite gratuito de IA foi atingido. Aguarde cerca de 1 minuto e tente novamente."
             return f"Erro na IA: {e}"
 
     def sugerir_categoria_gemini(descricao):
@@ -539,8 +559,10 @@ if check_password():
             
         categorias_disponiveis = get_categorias()
         prompt = f"""
-        Categoria para: "{descricao}". Opções: {', '.join(categorias_disponiveis)}.
-        Responda só com o nome da categoria.
+        Com base na descrição da despesa, sugira a categoria mais adequada.
+        Opções: {', '.join(categorias_disponiveis)}.
+        Descrição: "{descricao}"
+        Responda APENAS com o nome da categoria.
         """
         try:
             return api_sugestao_gemini(prompt)

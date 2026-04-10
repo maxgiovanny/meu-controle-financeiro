@@ -916,12 +916,6 @@ if check_password():
         st.subheader(f"Total no Mês: {formatar_moeda_br(t_cas)}")
 
         with st.expander("➕ Lançamento Rápido do Dia a Dia", expanded=False):
-            desc_temp = st.text_input("Descrição para sugestão:", key="desc_sugestao_casual")
-            if st.button("✨ Sugerir categoria", key="sugerir_casual"):
-                if desc_temp and gemini_ok:
-                    with st.spinner("IA pensando..."):
-                        sugestao = sugerir_categoria_gemini(desc_temp)
-                        st.success(f"Sugestão: **{sugestao}**")
             with st.form("form_novo_casual"):
                 c1, c2 = st.columns(2)
                 n_data = c1.date_input("Data do Registo", datetime.now().date())
@@ -936,6 +930,15 @@ if check_password():
                         st.success("Compra registada com sucesso!")
                         st.rerun()
                     else: st.warning("A descrição não pode estar vazia.")
+            
+            # --- Bloco da IA movido para baixo do formulário ---
+            st.divider()
+            desc_temp = st.text_input("Não sabe a categoria? Digite a descrição aqui para sugestão:", key="desc_sugestao_casual")
+            if st.button("✨ Sugerir categoria via IA", key="sugerir_casual"):
+                if desc_temp and gemini_ok:
+                    with st.spinner("IA pensando..."):
+                        sugestao = sugerir_categoria_gemini(desc_temp)
+                        st.info(f"A categoria sugerida é: **{sugestao}**")
 
         ec = st.data_editor(
             st.session_state.gastos_casuais,

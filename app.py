@@ -19,26 +19,28 @@ try:
 except ImportError:
     GEMINI_DISPONIVEL = False
 
-# --- 1. FUNÇÃO DE SEGURANÇA (LOGIN) ---
+## --- 1. FUNÇÃO DE SEGURANÇA (LOGIN) ---
 def check_password():
-    def password_entered():
-        if st.session_state["password"] == st.secrets["password"]:
-            st.session_state["password_correct"] = True
-            del st.session_state["password"]
-        else:
-            st.session_state["password_correct"] = False
-
-    if "password_correct" not in st.session_state:
-        st.title("🔒 Acesso Restrito")
-        st.text_input("Digite a senha:", type="password", on_change=password_entered, key="password")
-        return False
-    elif not st.session_state["password_correct"]:
-        st.title("🔒 Acesso Restrito")
-        st.text_input("Senha incorreta. Tente novamente:", type="password", on_change=password_entered, key="password")
-        st.error("😕 Senha inválida.")
-        return False
-    else:
+    # Se a senha já estiver correta na sessão, libera o acesso
+    if st.session_state.get("password_correct", False):
         return True
+
+    st.title("🔒 Acesso Restrito")
+    
+    # Cria um formulário visual com o campo de texto e o botão
+    with st.form("login_form"):
+        senha_digitada = st.text_input("Digite a senha:", type="password")
+        botao_entrar = st.form_submit_button("Entrar")
+
+        # Quando o botão for clicado (ou apertar Enter)
+        if botao_entrar:
+            if senha_digitada == st.secrets["password"]:
+                st.session_state["password_correct"] = True
+                st.rerun() # Recarrega a página automaticamente para abrir o app
+            else:
+                st.error("😕 Senha inválida. Tente novamente.")
+                
+    return False
 
 # --- 2. INÍCIO DO APLICATIVO ---
 if check_password():

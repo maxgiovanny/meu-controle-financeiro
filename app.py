@@ -11,6 +11,7 @@ import unicodedata
 import tempfile
 import os
 import io
+from google import genai  # <--- NOVO: importação da Gemini
 
 # --- 1. FUNÇÃO DE SEGURANÇA (LOGIN) ---
 def check_password():
@@ -41,6 +42,13 @@ if check_password():
              "Julho":7,"Agosto":8,"Setembro":9,"Outubro":10,"Novembro":11,"Dezembro":12}
     CATEGORIAS_PADRAO_BASE = ["Alimentação","Transporte","Lazer","Saúde","Casa","Trabalho","Outros"]
 
+    # --- INICIALIZAÇÃO DO CLIENTE GEMINI ---
+    try:
+        client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+    except Exception as e:
+        st.error(f"Erro ao inicializar Gemini: {e}")
+        client = None
+
     # --- FUNÇÕES SUPER SEGURAS DE LIMPEZA DE DADOS ---
     def safe_float(val, default=0.0):
         try:
@@ -70,7 +78,7 @@ if check_password():
             return str(val).strip().lower() in ['true', '1', 't', 'y', 'yes']
         except: return False
 
-    # --- NOVA CONEXÃO GOOGLE SHEETS ---
+    # --- CONEXÃO GOOGLE SHEETS ---
     @st.cache_resource
     def ligar_google_sheets():
         creds_dict = json.loads(st.secrets["gcp_service_account"])
@@ -345,6 +353,62 @@ if check_password():
         total = df_parc["Valor (R$)"].sum() if not df_parc.empty else 0.0
         soma_cat = df_parc.groupby("Categoria")["Valor (R$)"].sum().to_dict() if not df_parc.empty else {}
         return df_parc, total, soma_cat
+
+    # --- FUNÇÕES DE IA COM GEMINI ---
+    def analise_financeira_gemini(renda_total, despesa_total, sobra, gastos_categoria):
+        if client is None:
+            return "⚠️ Gemini não disponível. Verifique a chave de API."
+        # Prepara um resumo das 3 maiores categorias de gasto
+        top_categorias = sorted(gastos_categoria.items(), key=lambda x: x[1], reverse=True)[:3]
+        texto_categorias = ", ".join([f"{cat} (R$ {val:,.2f})" for cat, val in top_categorias])
+        
+        prompt = f"""
+        Você é um assistente financeiro pessoal. Analise os seguintes dados do mês:
+
+        - Renda total: R$ {renda_total:,.2f}
+        - Despesa total: R$ {despesa_total:,.2f}
+        - Sobra (renda - despesas): R$ {sobra:,.2f}
+        - Maiores categorias de gasto: {texto_categorias}
+
+        Forneça um breve feedback (máximo 80 palavras) com uma análise e uma dica prática para melhorar as finanças.
+        Seja encorajador e direto.
+        """
+        try:
+            resposta = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt,
+                config={'temperature': 0.7, 'max_output_tokens': 300}
+            )
+            return resposta.text
+        except Exception as e:
+            return f"Erro na análise: {e}"
+
+    def sugerir_categoria_gemini(descricao):
+        if client is None:
+            return "Outros"
+        categorias_disponiveis = get_categorias()
+        prompt = f"""
+        Com base na descrição da despesa, sugira a categoria mais adequada.
+        Categorias possíveis: {', '.join(categorias_disponiveis)}.
+        Responda APENAS com o nome da categoria.
+
+        Descrição: "{descricao}"
+        Categoria sugerida:
+        """
+        try:
+            resposta = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt,
+                config={'temperature': 0.2, 'max_output_tokens': 20}
+            )
+            sugestao = resposta.text.strip()
+            # Verifica se a sugestão está na lista de categorias
+            if sugestao in categorias_disponiveis:
+                return sugestao
+            else:
+                return "Outros"
+        except Exception:
+            return "Outros"
 
     # --- FUNÇÕES DE PDF E FORMATAÇÃO ---
     def remover_acentos(texto):
@@ -746,6 +810,16 @@ if check_password():
                 df_hist = pd.DataFrame(historico_df_dados).sort_values("Data_Sort")
                 fig_hist = px.line(df_hist, x="Mês", y=["Renda", "Despesas", "Sobra"], markers=True)
                 st.plotly_chart(fig_hist, use_container_width=True)
+        
+        # --- BOTÃO DE ANÁLISE DA IA ---
+        st.divider()
+        if st.button("🤖 Análise da IA para este mês"):
+            if client is None:
+                st.error("Gemini não configurado. Verifique a chave de API.")
+            else:
+                with st.spinner("Consultando o Gemini..."):
+                    analise = analise_financeira_gemini(total_renda, gt, sobra, gastos_categoria)
+                st.info(analise)
 
     elif sel == "Renda":
         st.subheader("💵 Fontes de Renda")
@@ -773,6 +847,14 @@ if check_password():
                 n_desc = c1.text_input("Descrição do Gasto")
                 n_cat = c2.selectbox("Categoria", get_categorias())
                 n_val = c3.number_input("Valor (R$)", min_value=0.0, format="%.2f")
+                col_sug, _ = st.columns([1,3])
+                with col_sug:
+                    if st.form_submit_button("✨ Sugerir categoria"):
+                        if n_desc:
+                            with st.spinner("IA pensando..."):
+                                sugestao = sugerir_categoria_gemini(n_desc)
+                                st.success(f"Sugestão: **{sugestao}**")
+                                # Pré-selecionar no selectbox é mais complexo, mas pode ser feito com session_state
                 if st.form_submit_button("Guardar Lançamento"):
                     if n_desc:
                         nova_linha = pd.DataFrame([{"Descrição": n_desc, "Valor (R$)": n_val, "Pago": False, "Categoria": n_cat}])
@@ -808,6 +890,11 @@ if check_password():
                 n_cat = c2.selectbox("Categoria", get_categorias())
                 n_desc = st.text_input("Descrição da Compra")
                 n_val = st.number_input("Valor (R$)", min_value=0.0, format="%.2f")
+                if st.form_submit_button("✨ Sugerir categoria"):
+                    if n_desc:
+                        with st.spinner("IA pensando..."):
+                            sugestao = sugerir_categoria_gemini(n_desc)
+                            st.success(f"Sugestão: **{sugestao}**")
                 if st.form_submit_button("Guardar Registo"):
                     if n_desc:
                         nova_linha = pd.DataFrame([{"Data": n_data, "Categoria": n_cat, "Descrição": n_desc, "Valor (R$)": n_val}])
@@ -829,7 +916,6 @@ if check_password():
         st.subheader("🎯 Metas e Limites Mensais")
         st.write("Defina um orçamento para cada categoria e acompanhe seus gastos.")
         
-        # --- Formulário para adicionar nova meta (expansível) ---
         with st.expander("➕ Adicionar Nova Meta", expanded=False):
             with st.form("form_metas"):
                 todas_categorias = get_categorias()
@@ -846,7 +932,6 @@ if check_password():
         
         st.markdown("---")
         
-        # --- Exibir metas existentes com botões de editar/excluir ---
         metas_ativas = st.session_state.metas_orcamento
         if not metas_ativas:
             st.info("Nenhuma meta definida. Use o formulário acima para criar seu primeiro orçamento.")
@@ -866,12 +951,10 @@ if check_password():
                     if perc >= 1.0:
                         st.error(f"⚠️ Excedido em R$ {gasto_atual - limite:.2f}")
                 with col3:
-                    # Botão editar
                     if st.button("✏️", key=f"edit_meta_{cat}"):
                         st.session_state.edit_meta_cat = cat
                         st.session_state.edit_meta_val = limite
                         st.rerun()
-                    # Botão excluir
                     if st.button("🗑️", key=f"del_meta_{cat}"):
                         del st.session_state.metas_orcamento[cat]
                         salvar_dados_nuvem()
@@ -879,7 +962,6 @@ if check_password():
                         st.rerun()
                 st.divider()
             
-            # --- Formulário de edição (aparece quando um botão editar é clicado) ---
             if "edit_meta_cat" in st.session_state:
                 with st.expander(f"✏️ Editando meta para {st.session_state.edit_meta_cat}", expanded=True):
                     with st.form("edit_meta_form"):
@@ -979,6 +1061,11 @@ if check_password():
                 n_mes_ini = c5.number_input("Mês Início", min_value=1, max_value=12, step=1, value=mes_n)
                 n_ano_ini = c6.number_input("Ano Início", min_value=2000, max_value=2050, step=1, value=ano_r)
                 
+                if st.form_submit_button("✨ Sugerir categoria"):
+                    if n_desc:
+                        with st.spinner("IA pensando..."):
+                            sugestao = sugerir_categoria_gemini(n_desc)
+                            st.success(f"Sugestão: **{sugestao}**")
                 if st.form_submit_button("Guardar Lançamento"):
                     if n_desc:
                         nova_linha = pd.DataFrame([{

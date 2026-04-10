@@ -46,16 +46,18 @@ if check_password():
 
    # --- VERIFICAÇÃO E INICIALIZAÇÃO DO GEMINI ---
     gemini_ok = False
-    client = None
+client = None
 
-    if GEMINI_DISPONIVEL and "GEMINI_API_KEY" in st.secrets:
-        try:
-            client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-            gemini_ok = True
-        except Exception as e:
-            st.warning(f"Erro ao inicializar Gemini: {e}")
-    elif not GEMINI_DISPONIVEL:
-        st.warning("Biblioteca 'google-genai' não instalada. IA desativada."))
+if GEMINI_DISPONIVEL and "GEMINI_API_KEY" in st.secrets:
+    try:
+        client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+        gemini_ok = True
+    except Exception as e:
+        st.warning(f"Erro ao inicializar Gemini: {e}")
+elif not GEMINI_DISPONIVEL:
+    st.warning("Biblioteca 'google-genai' não instalada. IA desativada.")
+elif "GEMINI_API_KEY" not in st.secrets:
+    st.warning("Chave GEMINI_API_KEY não encontrada nos secrets. IA desativada.")
             
     # --- CONSTANTES ---
     MESES = {"Janeiro":1,"Fevereiro":2,"Março":3,"Abril":4,"Maio":5,"Junho":6,

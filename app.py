@@ -4,6 +4,7 @@ import json
 import gspread
 import plotly.express as px
 import math
+import re
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 from fpdf import FPDF
@@ -61,6 +62,37 @@ if check_password():
              "Julho":7,"Agosto":8,"Setembro":9,"Outubro":10,"Novembro":11,"Dezembro":12}
     CATEGORIAS_PADRAO_BASE = ["Alimentação","Transporte","Lazer","Saúde","Casa","Trabalho","Outros"]
 
+    # --- FUNÇÕES DE FORMATAÇÃO BRASILEIRA ---
+    def formatar_moeda_br(valor):
+        """Formata um número para o padrão brasileiro: R$ 1.234,56"""
+        if valor is None:
+            valor = 0.0
+        return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+    def moeda_para_float(valor_str):
+        """Converte string com formato brasileiro (R$ 1.234,56) para float"""
+        if valor_str is None or valor_str == "":
+            return 0.0
+        if isinstance(valor_str, (int, float)):
+            return float(valor_str)
+        s = str(valor_str).strip()
+        # Remove "R$" se existir
+        s = re.sub(r'^R\$', '', s)
+        # Remove espaços
+        s = s.replace(" ", "")
+        # Troca vírgula decimal por ponto
+        s = s.replace(",", ".")
+        # Remove qualquer caractere que não seja dígito, ponto ou sinal de menos
+        s = re.sub(r'[^\d.-]', '', s)
+        # Trata múltiplos pontos (ex: 1.234.567,89 -> 1234567.89)
+        if s.count('.') > 1:
+            partes = s.split('.')
+            s = ''.join(partes[:-1]) + '.' + partes[-1]
+        try:
+            return float(s)
+        except:
+            return 0.0
+
     # --- FUNÇÕES SEGURAS DE LIMPEZA ---
     def safe_float(val, default=0.0):
         try:
@@ -98,7 +130,7 @@ if check_password():
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return gspread.authorize(creds).open_by_url(st.secrets["url_planilha"])
 
-    # --- LEITURA CORRIGIDA DAS ABAS (USANDO get_all_values) ---
+    # --- LEITURA DOS DADOS (COM CONVERSÃO DE MOEDA) ---
     def carregar_dados_nuvem_raw():
         db_conn = ligar_google_sheets()
         try:
@@ -118,7 +150,6 @@ if check_password():
                 "metas_orcamento": {}
             }, False
 
-        # Lê todas as linhas (incluindo cabeçalho)
         all_casuais = ws_casuais.get_all_values()
         all_fixos = ws_fixos.get_all_values()
         all_guias = ws_guias.get_all_values()
@@ -134,7 +165,7 @@ if check_password():
                 data = safe_str(row[1])
                 categoria = safe_str(row[2])
                 descricao = safe_str(row[3])
-                valor = safe_float(row[4])
+                valor = moeda_para_float(row[4])
                 if mes_ano not in hist_casuais:
                     hist_casuais[mes_ano] = []
                 hist_casuais[mes_ano].append({
@@ -153,7 +184,7 @@ if check_password():
                 if not mes_ano: continue
                 descricao = safe_str(row[1])
                 categoria = safe_str(row[2])
-                valor = safe_float(row[3])
+                valor = moeda_para_float(row[3])
                 pago = safe_bool(row[4])
                 if mes_ano not in hist_fixos:
                     hist_fixos[mes_ano] = []
@@ -173,7 +204,7 @@ if check_password():
                 if not guia: continue
                 descricao = safe_str(row[1])
                 categoria = safe_str(row[2])
-                valor_parcela = safe_float(row[3])
+                valor_parcela = moeda_para_float(row[3])
                 mes_ini = safe_int(row[4], 1)
                 ano_ini = safe_int(row[5], 2026)
                 qtd = safe_int(row[6], 1)
@@ -208,7 +239,7 @@ if check_password():
 
         return result, False
 
-    # --- ESCRITA SEGURA ---
+    # --- ESCRITA SEGURA (protegida) ---
     def salvar_dados_nuvem():
         db_conn = ligar_google_sheets()
 
@@ -231,7 +262,7 @@ if check_password():
             if f"dados_{g}" in st.session_state:
                 st.session_state[f"dados_raw_{g}"] = st.session_state[f"dados_{g}"].to_dict("records")
 
-        # Preparar dados planos
+        # Preparar dados planos (valores em float, sem formatação)
         flat_casuais = [["Mes_Ano", "Data", "Categoria", "Descrição", "Valor"]]
         for ma, itens in st.session_state.historico_casuais.items():
             for item in itens:
@@ -268,6 +299,7 @@ if check_password():
             "metas_orcamento": {safe_str(k): safe_float(v) for k, v in st.session_state.metas_orcamento.items()}
         }
 
+        # Atualizar abas (valores numéricos, sem formatação)
         ws_casuais = db_conn.worksheet("Casuais")
         ws_casuais.clear()
         ws_casuais.update(values=flat_casuais, range_name='A1')
@@ -363,12 +395,12 @@ if check_password():
         soma_cat = df_parc.groupby("Categoria")["Valor (R$)"].sum().to_dict() if not df_parc.empty else {}
         return df_parc, total, soma_cat
 
-    # --- FUNÇÕES DE PDF E FORMATAÇÃO ---
+    # --- FUNÇÕES DE PDF (usando formatação brasileira) ---
     def remover_acentos(texto):
         if not isinstance(texto, str): texto = str(texto)
         return unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')
 
-    def formatar_moeda(valor):
+    def formatar_moeda_pdf(valor):
         return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
     def gerar_pdf_mes(mes_nome, ano, renda_df, fixos_df, casuais_df, guias_dados, total_renda, t_fix, t_cas, t_gui, sobra, dados_categoria):
@@ -390,7 +422,7 @@ if check_password():
             pdf.set_fill_color(*COR_TITULO_SECAO)
             pdf.set_draw_color(120, 120, 120) 
             pdf.cell(140, 8, remover_acentos(f"  {titulo}"), border='TB', fill=True)
-            pdf.cell(50, 8, formatar_moeda(total), border='TB', ln=True, align="R", fill=True)
+            pdf.cell(50, 8, formatar_moeda_pdf(total), border='TB', ln=True, align="R", fill=True)
             pdf.set_draw_color(*COR_LINHA_DIVISORIA)
             pdf.set_font('helvetica', '', 9)
             if df is None or df.empty:
@@ -407,7 +439,7 @@ if check_password():
                     texto_esq = f"  {d_str} | {row.get('Categoria', '')} - {row.get('Descrição', '')}"
                 if len(texto_esq) > 85: texto_esq = texto_esq[:82] + "..."
                 pdf.cell(140, 6, remover_acentos(texto_esq), border='B')
-                pdf.cell(50, 6, formatar_moeda(row['Valor (R$)']), border='B', ln=True, align="R")
+                pdf.cell(50, 6, formatar_moeda_pdf(row['Valor (R$)']), border='B', ln=True, align="R")
             pdf.ln(4)
 
         imprimir_secao("Renda Mensal", total_renda, renda_df, "renda")
@@ -418,7 +450,7 @@ if check_password():
         pdf.set_fill_color(*COR_TITULO_SECAO)
         pdf.set_draw_color(120, 120, 120)
         pdf.cell(140, 8, remover_acentos("  Guias (Cartões e Parcelamentos)"), border='TB', fill=True)
-        pdf.cell(50, 8, formatar_moeda(t_gui), border='TB', ln=True, align="R", fill=True)
+        pdf.cell(50, 8, formatar_moeda_pdf(t_gui), border='TB', ln=True, align="R", fill=True)
         pdf.set_draw_color(*COR_LINHA_DIVISORIA)
         
         if not guias_dados:
@@ -435,7 +467,7 @@ if check_password():
                     linha_texto = f"        - {row['Descrição']} ({row['Categoria']})"
                     if len(linha_texto) > 75: linha_texto = linha_texto[:72] + "..."
                     pdf.cell(140, 6, remover_acentos(linha_texto), border='B')
-                    pdf.cell(50, 6, formatar_moeda(row['Valor (R$)']), border='B', ln=True, align="R")
+                    pdf.cell(50, 6, formatar_moeda_pdf(row['Valor (R$)']), border='B', ln=True, align="R")
         pdf.ln(4)
         
         pdf.set_font('helvetica', 'B', 11)
@@ -447,7 +479,7 @@ if check_password():
         pdf.set_draw_color(*COR_LINHA_DIVISORIA)
         for cat, valor in sorted(dados_categoria.items(), key=lambda x: x[1], reverse=True):
             pdf.cell(140, 6, remover_acentos(f"  {cat}"), border='B')
-            pdf.cell(50, 6, formatar_moeda(valor), border='B', ln=True, align="R")
+            pdf.cell(50, 6, formatar_moeda_pdf(valor), border='B', ln=True, align="R")
         pdf.ln(6)
         
         pdf.set_font('helvetica', 'B', 12)
@@ -456,7 +488,7 @@ if check_password():
         else:
             pdf.set_fill_color(255, 220, 220); pdf.set_text_color(150, 0, 0); pdf.set_draw_color(200, 0, 0)
         pdf.cell(140, 10, remover_acentos("  SALDO LÍQUIDO DO MÊS:"), border=1, fill=True)
-        pdf.cell(50, 10, formatar_moeda(sobra), border=1, ln=True, align="R", fill=True)
+        pdf.cell(50, 10, formatar_moeda_pdf(sobra), border=1, ln=True, align="R", fill=True)
         pdf.set_text_color(0,0,0)
         
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp: temp_path = tmp.name
@@ -539,8 +571,8 @@ if check_password():
         carregar_dados_sessao()
         st.session_state.dados_carregados = True
 
-        # Diagnóstico rápido (opcional)
-        with st.expander("🔧 Diagnóstico de carregamento (pode remover depois)"):
+        # Diagnóstico (pode remover depois)
+        with st.expander("🔧 Diagnóstico de carregamento (pode remover)"):
             st.write(f"Total meses em fixos: {len(st.session_state.historico_fixos)}")
             st.write(f"Total meses em casuais: {len(st.session_state.historico_casuais)}")
             st.write(f"Mês atual: {st.session_state.mes_atual}_{st.session_state.ano_atual}")
@@ -554,11 +586,10 @@ if check_password():
     def get_categorias():
         return st.session_state.categorias_padrao + st.session_state.categorias_personalizadas
 
-    # --- SIDEBAR ---
+    # --- SIDEBAR (configurações, PDF, categorias, guias) ---
     with st.sidebar:
         st.header("⚙️ Configurações")
         if st.button("🔄 Recarregar Nuvem"):
-            # Força recarregamento completo
             for key in ["dados_carregados", "historico_fixos", "historico_casuais", "guias_extras", 
                         "categorias_personalizadas", "categorias_padrao", "renda_por_mes", "metas_orcamento"]:
                 if key in st.session_state:
@@ -754,10 +785,10 @@ if check_password():
 
     if sel == "Resumo Geral":
         gt = t_fix + t_cas + total_guias
-        c1,c2,c3 = st.columns(3)
-        c1.metric("Gasto Total", f"R$ {gt:,.2f}")
-        c2.metric("Sobra Real", f"R$ {sobra:,.2f}", delta=f"{(sobra/total_renda)*100:.1f}%" if total_renda>0 else "0%")
-        c3.metric("Renda Total", f"R$ {total_renda:,.2f}")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Gasto Total", formatar_moeda_br(gt))
+        c2.metric("Sobra Real", formatar_moeda_br(sobra), delta=f"{(sobra/total_renda)*100:.1f}%" if total_renda>0 else "0%")
+        c3.metric("Renda Total", formatar_moeda_br(total_renda))
         fig = px.pie(pd.DataFrame({"C":["Fixos","Dia a Dia","Guias","Sobra"],"V":[t_fix,t_cas,total_guias,max(0,sobra)]}), values='V', names='C', hole=.4)
         fig.update_layout(margin=dict(t=0,b=0,l=0,r=0), height=300)
         st.plotly_chart(fig, use_container_width=True)
@@ -811,8 +842,15 @@ if check_password():
 
     elif sel == "Renda":
         st.subheader("💵 Fontes de Renda")
-        er = st.data_editor(st.session_state.renda_detalhada, num_rows="dynamic", use_container_width=True, hide_index=True,
-                            column_config={"Valor (R$)": st.column_config.NumberColumn(min_value=0, format="R$ %.2f")})
+        er = st.data_editor(
+            st.session_state.renda_detalhada,
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Valor (R$)": st.column_config.NumberColumn(min_value=0, format="R$ %.2f")
+            }
+        )
         if not er.equals(st.session_state.renda_detalhada):
             st.session_state.renda_detalhada = er
             salvar_dados_nuvem()
@@ -821,7 +859,7 @@ if check_password():
         ct, cb = st.columns([3,1])
         with ct:
             st.subheader("📌 Contas Fixas")
-            st.subheader(f"Total no Mês: R$ {t_fix:,.2f}")
+            st.subheader(f"Total no Mês: {formatar_moeda_br(t_fix)}")
         with cb:
             st.write("")
             if st.button("🔄 Importar de Mês Anterior"):
@@ -867,7 +905,7 @@ if check_password():
 
     elif sel == "Dia a Dia":
         st.subheader("🛍️ Compras Casuais")
-        st.subheader(f"Total no Mês: R$ {t_cas:,.2f}")
+        st.subheader(f"Total no Mês: {formatar_moeda_br(t_cas)}")
 
         with st.expander("➕ Lançamento Rápido do Dia a Dia", expanded=False):
             desc_temp = st.text_input("Descrição para sugestão:", key="desc_sugestao_casual")
@@ -891,10 +929,17 @@ if check_password():
                         st.rerun()
                     else: st.warning("A descrição não pode estar vazia.")
 
-        ec = st.data_editor(st.session_state.gastos_casuais, num_rows="dynamic", use_container_width=True, hide_index=True,
-                            column_config={"Data": st.column_config.DateColumn(format="DD/MM/YYYY"),
-                                           "Categoria": st.column_config.SelectboxColumn(options=get_categorias()),
-                                           "Valor (R$)": st.column_config.NumberColumn(format="R$ %.2f", min_value=0)})
+        ec = st.data_editor(
+            st.session_state.gastos_casuais,
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Data": st.column_config.DateColumn(format="DD/MM/YYYY"),
+                "Categoria": st.column_config.SelectboxColumn(options=get_categorias()),
+                "Valor (R$)": st.column_config.NumberColumn(format="R$ %.2f", min_value=0)
+            }
+        )
         if not ec.equals(st.session_state.gastos_casuais):
             st.session_state.gastos_casuais = ec
             salvar_dados_nuvem()
@@ -912,7 +957,7 @@ if check_password():
                     if val_meta > 0:
                         st.session_state.metas_orcamento[cat_meta] = val_meta
                         salvar_dados_nuvem()
-                        st.success(f"Meta para '{cat_meta}' definida em R$ {val_meta:,.2f}")
+                        st.success(f"Meta para '{cat_meta}' definida em {formatar_moeda_br(val_meta)}")
                         st.rerun()
                     else:
                         st.warning("O valor deve ser maior que zero.")
@@ -930,12 +975,12 @@ if check_password():
                 col1, col2, col3 = st.columns([2, 3, 1])
                 with col1:
                     st.write(f"**{cat}**")
-                    st.caption(f"Meta: R$ {limite:,.2f}")
+                    st.caption(f"Meta: {formatar_moeda_br(limite)}")
                 with col2:
-                    st.write(f"Gasto atual: R$ {gasto_atual:,.2f} ({(perc*100):.1f}%)")
+                    st.write(f"Gasto atual: {formatar_moeda_br(gasto_atual)} ({(perc*100):.1f}%)")
                     st.progress(perc_visual)
                     if perc >= 1.0:
-                        st.error(f"⚠️ Excedido em R$ {gasto_atual - limite:.2f}")
+                        st.error(f"⚠️ Excedido em {formatar_moeda_br(gasto_atual - limite)}")
                 with col3:
                     if st.button("✏️", key=f"edit_meta_{cat}"):
                         st.session_state.edit_meta_cat = cat
@@ -979,17 +1024,17 @@ if check_password():
             for chave, df_list in st.session_state.historico_fixos.items():
                 for row in df_list:
                     if termo in str(row.get('Descrição','')).lower() or termo in str(row.get('Categoria','')).lower():
-                        resultados.append({"Referência": chave, "Tipo": "Despesa Fixa", "Data": "-", "Categoria": row.get('Categoria',''), "Descrição": row.get('Descrição',''), "Valor": f"R$ {row.get('Valor (R$)',0):.2f}"})
+                        resultados.append({"Referência": chave, "Tipo": "Despesa Fixa", "Data": "-", "Categoria": row.get('Categoria',''), "Descrição": row.get('Descrição',''), "Valor": formatar_moeda_br(row.get('Valor (R$)',0))})
             for chave, df_list in st.session_state.historico_casuais.items():
                 for row in df_list:
                     if termo in str(row.get('Descrição','')).lower() or termo in str(row.get('Categoria','')).lower():
-                        resultados.append({"Referência": chave, "Tipo": "Dia a Dia", "Data": row.get('Data','-'), "Categoria": row.get('Categoria',''), "Descrição": row.get('Descrição',''), "Valor": f"R$ {row.get('Valor (R$)',0):.2f}"})
+                        resultados.append({"Referência": chave, "Tipo": "Dia a Dia", "Data": row.get('Data','-'), "Categoria": row.get('Categoria',''), "Descrição": row.get('Descrição',''), "Valor": formatar_moeda_br(row.get('Valor (R$)',0))})
             for g in st.session_state.guias_extras:
                 df_g = st.session_state.get(f"dados_{g}")
                 if df_g is not None and not df_g.empty:
                     for _, row in df_g.iterrows():
                         if termo in str(row.get('Descrição','')).lower() or termo in str(row.get('Categoria','')).lower():
-                            resultados.append({"Referência": f"Fatura: {g}", "Tipo": "Parcelamento", "Data": f"Mês {row.get('Mês Início (1-12)')}/{row.get('Ano Início')}", "Categoria": row.get('Categoria',''), "Descrição": row.get('Descrição',''), "Valor": f"R$ {row.get('Valor Parcela (R$)',0):.2f}"})
+                            resultados.append({"Referência": f"Fatura: {g}", "Tipo": "Parcelamento", "Data": f"Mês {row.get('Mês Início (1-12)')}/{row.get('Ano Início')}", "Categoria": row.get('Categoria',''), "Descrição": row.get('Descrição',''), "Valor": formatar_moeda_br(row.get('Valor Parcela (R$)',0))})
             if resultados:
                 df_res = pd.DataFrame(resultados)
                 st.success(f"Foram encontrados {len(df_res)} registos em toda a sua conta!")
@@ -1002,13 +1047,14 @@ if check_password():
         dados_guias = []
         for g in st.session_state.guias_extras:
             _, tot, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{g}"), mes_n, ano_r)
-            dados_guias.append({"Guia":g, "Custo Total (R$)":tot})
+            dados_guias.append({"Guia": g, "Custo Total (R$)": tot})
         if dados_guias:
             df_guias = pd.DataFrame(dados_guias)
             total_geral = df_guias['Custo Total (R$)'].sum()
-            st.metric("💰 Total Geral de Todas as Guias", f"R$ {total_geral:,.2f}")
+            st.metric("💰 Total Geral de Todas as Guias", formatar_moeda_br(total_geral))
+            df_guias['Custo Total (R$)'] = df_guias['Custo Total (R$)'].apply(formatar_moeda_br)
             st.dataframe(df_guias, use_container_width=True, hide_index=True)
-            fig_guias = px.bar(df_guias, x="Guia", y="Custo Total (R$)", color="Guia", text_auto='.2f')
+            fig_guias = px.bar(df_guias, x="Guia", y=df_guias['Custo Total (R$)'].str.replace('R$ ', '').str.replace('.', '').str.replace(',', '.').astype(float), color="Guia", text_auto='.2f')
             st.plotly_chart(fig_guias, use_container_width=True)
         else:
             st.info("Nenhuma guia extra criada.")
@@ -1017,16 +1063,18 @@ if check_password():
         st.subheader("📊 Gastos por Categoria (Geral do Mês)")
         if gastos_categoria:
             df_cat = pd.DataFrame(gastos_categoria.items(), columns=["Categoria","Valor (R$)"]).sort_values("Valor (R$)", ascending=False)
+            df_cat['Valor (R$)'] = df_cat['Valor (R$)'].apply(formatar_moeda_br)
             st.dataframe(df_cat, use_container_width=True, hide_index=True)
-            fig_cat = px.bar(df_cat, x="Categoria", y="Valor (R$)", color="Categoria", text_auto='.2f')
+            fig_cat = px.bar(df_cat, x="Categoria", y=df_cat['Valor (R$)'].str.replace('R$ ', '').str.replace('.', '').str.replace(',', '.').astype(float), color="Categoria", text_auto='.2f')
             st.plotly_chart(fig_cat, use_container_width=True)
         else:
             st.info("Nenhum gasto registado neste mês.")
 
     else:  # --- ABAS INDIVIDUAIS DAS GUIAS EXTRAS ---
         df_parc, total_parc, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{sel}"), mes_n, ano_r)
-        st.subheader(f"Total no Mês: R$ {total_parc:,.2f}")
+        st.subheader(f"Total no Mês: {formatar_moeda_br(total_parc)}")
         if not df_parc.empty:
+            df_parc['Valor (R$)'] = df_parc['Valor (R$)'].apply(formatar_moeda_br)
             st.dataframe(df_parc, use_container_width=True, hide_index=True)
         st.divider()
         
@@ -1064,14 +1112,19 @@ if check_password():
                         st.warning("Por favor, preencha a descrição.")
 
         st.write("**Base de Lançamentos (parcelas):**")
-        de = st.data_editor(st.session_state[f"dados_{sel}"], num_rows="dynamic", use_container_width=True, hide_index=True,
-                            column_config={
-                                "Valor Parcela (R$)": st.column_config.NumberColumn(format="R$ %.2f", min_value=0),
-                                "Mês Início (1-12)": st.column_config.NumberColumn(min_value=1, max_value=12, step=1),
-                                "Ano Início": st.column_config.NumberColumn(min_value=2000, max_value=2030, step=1),
-                                "Qtd Parcelas": st.column_config.NumberColumn(min_value=1, step=1),
-                                "Categoria": st.column_config.SelectboxColumn(options=get_categorias())
-                            })
+        de = st.data_editor(
+            st.session_state[f"dados_{sel}"],
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Valor Parcela (R$)": st.column_config.NumberColumn(format="R$ %.2f", min_value=0),
+                "Mês Início (1-12)": st.column_config.NumberColumn(min_value=1, max_value=12, step=1),
+                "Ano Início": st.column_config.NumberColumn(min_value=2000, max_value=2030, step=1),
+                "Qtd Parcelas": st.column_config.NumberColumn(min_value=1, step=1),
+                "Categoria": st.column_config.SelectboxColumn(options=get_categorias())
+            }
+        )
         if not de.equals(st.session_state[f"dados_{sel}"]):
             st.session_state[f"dados_{sel}"] = de
             salvar_dados_nuvem()

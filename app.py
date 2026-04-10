@@ -873,12 +873,6 @@ if check_password():
                 st.rerun()
 
         with st.expander("➕ Lançamento Rápido de Fixos", expanded=False):
-            desc_temp = st.text_input("Descrição para sugestão:", key="desc_sugestao_fixo")
-            if st.button("✨ Sugerir categoria", key="sugerir_fixo"):
-                if desc_temp and gemini_ok:
-                    with st.spinner("IA pensando..."):
-                        sugestao = sugerir_categoria_gemini(desc_temp)
-                        st.success(f"Sugestão: **{sugestao}**")
             with st.form("form_novo_fixo"):
                 c1, c2, c3 = st.columns([2, 1, 1])
                 n_desc = c1.text_input("Descrição do Gasto")
@@ -892,6 +886,15 @@ if check_password():
                         st.success("Adicionado com sucesso!")
                         st.rerun()
                     else: st.warning("Por favor, preencha a descrição.")
+            
+            # --- Bloco da IA movido para baixo do formulário ---
+            st.divider()
+            desc_temp = st.text_input("Não sabe a categoria? Digite a descrição aqui para sugestão:", key="desc_sugestao_fixo")
+            if st.button("✨ Sugerir categoria via IA", key="sugerir_fixo"):
+                if desc_temp and gemini_ok:
+                    with st.spinner("IA pensando..."):
+                        sugestao = sugerir_categoria_gemini(desc_temp)
+                        st.info(f"A categoria sugerida é: **{sugestao}**")
 
         ef = st.data_editor(
             st.session_state.gastos_fixos,

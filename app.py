@@ -515,7 +515,7 @@ if check_password():
         """
         try:
             resposta = client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-1.5-flash",
                 contents=prompt,
                 config={'temperature': 0.7, 'max_output_tokens': 300}
             )
@@ -540,7 +540,7 @@ if check_password():
         """
         try:
             resposta = client.models.generate_content(
-                model="gemini-2.0-flash",
+                model="gemini-1.5-flash",
                 contents=prompt,
                 config={'temperature': 0.2, 'max_output_tokens': 20}
             )

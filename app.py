@@ -41,9 +41,10 @@ if check_password():
              "Julho":7,"Agosto":8,"Setembro":9,"Outubro":10,"Novembro":11,"Dezembro":12}
     CATEGORIAS_PADRAO_BASE = ["Alimentação","Transporte","Lazer","Saúde","Casa","Trabalho","Outros"]
 
-    # --- FUNÇÕES SUPER SEGURAS DE LIMPEZA DE DADOS (Resolve o erro InvalidJSONError) ---
+    # --- FUNÇÕES SUPER SEGURAS DE LIMPEZA DE DADOS ---
     def safe_float(val, default=0.0):
         try:
+            if pd.isna(val): return default
             v = float(val)
             if math.isnan(v) or math.isinf(v): return default
             return v
@@ -51,6 +52,7 @@ if check_password():
 
     def safe_int(val, default=1):
         try:
+            if pd.isna(val): return default
             v = float(val)
             if math.isnan(v) or math.isinf(v): return default
             return int(v)
@@ -59,13 +61,13 @@ if check_password():
     def safe_str(val):
         try:
             if pd.isna(val): return ""
-            return str(val)
+            return str(val).strip()
         except: return ""
 
     def safe_bool(val):
         try:
             if pd.isna(val): return False
-            return str(val).strip().lower() == 'true'
+            return str(val).strip().lower() in ['true', '1', 't', 'y', 'yes']
         except: return False
 
     # --- NOVA CONEXÃO GOOGLE SHEETS ---
@@ -82,42 +84,66 @@ if check_password():
         st.error(f"Erro de conexão com a nuvem. Verifique a planilha e a chave. Erro: {e}")
         st.stop()
 
-    # --- SISTEMA DE BANCO DE DADOS (Leitura) ---
+    # --- SISTEMA DE BANCO DE DADOS INTELIGENTE (Com Auto-Reparação) ---
     def carregar_dados_nuvem_raw():
         db_conn = ligar_google_sheets()
         migrado_agora = False
+        precisa_migrar = False
         
+        # 1. TESTAR SE A MIGRAÇÃO ANTERIOR FOI FEITA CORRETAMENTE
         try:
             ws_config = db_conn.worksheet("Configuracoes")
-            ws_casuais = db_conn.worksheet("Casuais")
-            ws_fixos = db_conn.worksheet("Fixos")
-            ws_guias = db_conn.worksheet("Guias")
+            val_conf = ws_config.acell('A1').value
+            # Se a aba existe mas está vazia, a migração quebrou no meio!
+            if not val_conf or len(val_conf.strip()) < 5:
+                precisa_migrar = True
         except gspread.exceptions.WorksheetNotFound:
+            # Se a aba nem existe, é a primeira vez rodando
+            precisa_migrar = True
+            
+        # 2. MOTOR DE MIGRAÇÃO (Roda se for a 1ª vez OU se tiver de consertar o erro anterior)
+        if precisa_migrar:
             migrado_agora = True
-            # Tentar achar a aba antiga
-            try:
-                ws_original = db_conn.worksheet("Página 1")
-            except:
+            
+            # Limpar as abas defeituosas do erro anterior (Auto-Reparação)
+            for aba in ["Casuais", "Fixos", "Guias", "Configuracoes"]:
                 try:
-                    ws_original = db_conn.sheet1
+                    t = db_conn.worksheet(aba)
+                    db_conn.del_worksheet(t)
                 except:
-                    st.error("Erro fatal: Aba antiga não encontrada para migração.")
-                    st.stop()
-
+                    pass
+            
+            # Tentar achar a aba original com os seus dados valiosos
+            try:
+                ws_original = db_conn.worksheet("Backup_Antigo")
+            except gspread.exceptions.WorksheetNotFound:
+                try:
+                    ws_original = db_conn.worksheet("Página 1")
+                except gspread.exceptions.WorksheetNotFound:
+                    ws_original = db_conn.sheet1 # Se tudo falhar, pega a aba 1
+            
+            # Extrair o tesouro (os dados originais)
             val = ws_original.acell('A1').value
             dados_antigos = json.loads(val) if val else {}
             
+            # Criar as fundações novas e limpas
             db_conn.add_worksheet("Casuais", rows=1000, cols=5)
             db_conn.add_worksheet("Fixos", rows=1000, cols=5)
             db_conn.add_worksheet("Guias", rows=1000, cols=7)
             db_conn.add_worksheet("Configuracoes", rows=100, cols=2)
             
-            try:
-                ws_original.update_title("Backup_Antigo")
-            except:
-                pass 
+            # Renomear para não haver confusão futura
+            if ws_original.title != "Backup_Antigo":
+                try: ws_original.update_title("Backup_Antigo")
+                except: pass 
                 
             return dados_antigos, migrado_agora
+
+        # 3. LEITURA NORMAL (Após a base de dados estar perfeita)
+        ws_casuais = db_conn.worksheet("Casuais")
+        ws_fixos = db_conn.worksheet("Fixos")
+        ws_guias = db_conn.worksheet("Guias")
+        ws_config = db_conn.worksheet("Configuracoes")
 
         dados_casuais = ws_casuais.get_all_records()
         hist_casuais = {}
@@ -197,7 +223,7 @@ if check_password():
             if f"dados_{g}" in st.session_state:
                 st.session_state[f"dados_raw_{g}"] = st.session_state[f"dados_{g}"].to_dict("records")
 
-        # Escrita com higienização rigorosa contra o InvalidJSONError
+        # Escrita com higienização rigorosa contra o erro InvalidJSONError
         flat_casuais = [["Mes_Ano", "Data", "Categoria", "Descrição", "Valor"]]
         for ma, itens in st.session_state.historico_casuais.items():
             for item in itens:
@@ -433,7 +459,7 @@ if check_password():
 
     # --- INICIALIZAÇÃO E GATILHO DA MIGRAÇÃO ---
     if "dados_carregados" not in st.session_state:
-        with st.spinner("Sincronizando com Banco de Dados..."):
+        with st.spinner("Analisando e Consertando Banco de Dados..."):
             dados_raw, migrado_agora = carregar_dados_nuvem_raw()
             
         hj = datetime.now()
@@ -465,7 +491,7 @@ if check_password():
         
         if migrado_agora:
             salvar_dados_nuvem()
-            st.success("✅ O seu Banco de Dados foi migrado com sucesso para a arquitetura multi-abas!")
+            st.success("✅ Sistema Auto-Reparado: Os seus dados antigos foram resgatados e a migração foi concluída com sucesso!")
 
     if "pdf_ready" not in st.session_state: st.session_state.pdf_ready = False
     if "pdf_data" not in st.session_state: st.session_state.pdf_data = None

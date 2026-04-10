@@ -825,34 +825,83 @@ if check_password():
             st.session_state.gastos_casuais = ec
             salvar_dados_nuvem()
 
-    elif sel == "Metas de Orçamento":
+        elif sel == "Metas de Orçamento":
         st.subheader("🎯 Metas e Limites Mensais")
-        st.write("Defina um orçamento para cada categoria e garanta que não ultrapassa o planeado.")
+        st.write("Defina um orçamento para cada categoria e acompanhe seus gastos.")
         
-        with st.expander("⚙️ Configurar Novo Limite"):
+        # --- Formulário para adicionar nova meta (expansível) ---
+        with st.expander("➕ Adicionar Nova Meta", expanded=False):
             with st.form("form_metas"):
-                cat_meta = st.selectbox("Escolha a Categoria", get_categorias())
-                val_meta = st.number_input("Orçamento Máximo (R$)", min_value=0.0, step=50.0)
-                if st.form_submit_button("Gravar Meta"):
-                    st.session_state.metas_orcamento[cat_meta] = val_meta
-                    salvar_dados_nuvem()
-                    st.success(f"Meta de '{cat_meta}' guardada com sucesso!")
-                    st.rerun()
-
+                todas_categorias = get_categorias()
+                cat_meta = st.selectbox("Categoria:", todas_categorias, key="meta_cat_select")
+                val_meta = st.number_input("Orçamento Máximo (R$):", min_value=0.0, step=50.0, format="%.2f", key="meta_val")
+                if st.form_submit_button("💾 Salvar Meta"):
+                    if val_meta > 0:
+                        st.session_state.metas_orcamento[cat_meta] = val_meta
+                        salvar_dados_nuvem()
+                        st.success(f"Meta para '{cat_meta}' definida em R$ {val_meta:,.2f}")
+                        st.rerun()
+                    else:
+                        st.warning("O valor deve ser maior que zero.")
+        
         st.markdown("---")
+        
+        # --- Exibir metas existentes com botões de editar/excluir ---
         metas_ativas = st.session_state.metas_orcamento
         if not metas_ativas:
-            st.info("Nenhuma meta definida. Use o menu acima para criar o seu primeiro orçamento.")
+            st.info("Nenhuma meta definida. Use o formulário acima para criar seu primeiro orçamento.")
         else:
-            for cat, limite in metas_ativas.items():
+            for cat, limite in list(metas_ativas.items()):
                 gasto_atual = gastos_categoria.get(cat, 0.0)
-                perc = gasto_atual / limite if limite > 0 else 0
+                perc = (gasto_atual / limite) if limite > 0 else 0
                 perc_visual = min(perc, 1.0)
                 
-                st.write(f"**{cat}**: Gasto R$ {gasto_atual:.2f} de R$ {limite:.2f} ({(perc*100):.1f}%)")
-                st.progress(perc_visual)
-                if perc >= 1.0:
-                    st.error(f"⚠️ Atenção! O orçamento de {cat} foi ultrapassado em R$ {gasto_atual - limite:.2f}.")
+                col1, col2, col3 = st.columns([2, 3, 1])
+                with col1:
+                    st.write(f"**{cat}**")
+                    st.caption(f"Meta: R$ {limite:,.2f}")
+                with col2:
+                    st.write(f"Gasto atual: R$ {gasto_atual:,.2f} ({(perc*100):.1f}%)")
+                    st.progress(perc_visual)
+                    if perc >= 1.0:
+                        st.error(f"⚠️ Excedido em R$ {gasto_atual - limite:.2f}")
+                with col3:
+                    # Botão editar
+                    if st.button("✏️", key=f"edit_meta_{cat}"):
+                        st.session_state.edit_meta_cat = cat
+                        st.session_state.edit_meta_val = limite
+                        st.rerun()
+                    # Botão excluir
+                    if st.button("🗑️", key=f"del_meta_{cat}"):
+                        del st.session_state.metas_orcamento[cat]
+                        salvar_dados_nuvem()
+                        st.success(f"Meta para '{cat}' removida.")
+                        st.rerun()
+                st.divider()
+            
+            # --- Formulário de edição (aparece quando um botão editar é clicado) ---
+            if "edit_meta_cat" in st.session_state:
+                with st.expander(f"✏️ Editando meta para {st.session_state.edit_meta_cat}", expanded=True):
+                    with st.form("edit_meta_form"):
+                        novo_valor = st.number_input(
+                            "Novo valor (R$):", 
+                            min_value=0.0, 
+                            value=st.session_state.edit_meta_val, 
+                            step=50.0, 
+                            format="%.2f"
+                        )
+                        col_btn1, col_btn2 = st.columns(2)
+                        with col_btn1:
+                            if st.form_submit_button("✅ Atualizar"):
+                                st.session_state.metas_orcamento[st.session_state.edit_meta_cat] = novo_valor
+                                salvar_dados_nuvem()
+                                del st.session_state.edit_meta_cat
+                                st.success("Meta atualizada!")
+                                st.rerun()
+                        with col_btn2:
+                            if st.form_submit_button("❌ Cancelar"):
+                                del st.session_state.edit_meta_cat
+                                st.rerun()
 
     elif sel == "Pesquisa Global":
         st.subheader("🔍 Procurar no Histórico")

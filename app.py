@@ -44,36 +44,42 @@ def check_password():
 if check_password():
     st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="centered")
 
-       # --- VERIFICAÇÃO DA CHAVE GEMINI (com detecção de modelo disponível) ---
+          # --- VERIFICAÇÃO E INICIALIZAÇÃO DO GEMINI (modelo gemini-1.5-pro) ---
     gemini_ok = False
     client = None
-    modelo_usado = None
-    
+
     if GEMINI_DISPONIVEL and "GEMINI_API_KEY" in st.secrets:
         try:
             genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-            # Lista de possíveis modelos para testar
-            modelos_teste = ["gemini-1.5-flash", "gemini-pro", "gemini-1.5-pro", "gemini-2.0-flash-exp"]
-            for modelo in modelos_teste:
-                try:
-                    test_client = genai.GenerativeModel(modelo)
-                    # Teste rápido
-                    test_client.generate_content("Ok")
-                    client = test_client
-                    modelo_usado = modelo
-                    gemini_ok = True
-                    break
-                except:
-                    continue
-            if not gemini_ok:
-                st.warning("Nenhum modelo Gemini disponível. IA desativada.")
+            # Usar gemini-1.5-pro (amplamente suportado)
+            client = genai.GenerativeModel('gemini-1.5-pro')
+            # Teste rápido
+            test_response = client.generate_content("OK")
+            if test_response.text:
+                gemini_ok = True
+                st.success("✅ Gemini conectado com sucesso!")
+            else:
+                st.warning("Gemini respondeu, mas algo está errado. IA pode estar limitada.")
         except Exception as e:
-            st.warning(f"Erro ao inicializar Gemini: {e}")
+            st.error(f"Erro ao conectar com Gemini: {e}")
+            st.info("Verifique se a chave API está correta e se o faturamento está ativo (o nível gratuito funciona).")
     elif not GEMINI_DISPONIVEL:
-        st.warning("Biblioteca 'google-generativeai' não instalada. Execute: pip install google-generativeai")
+        st.error("Biblioteca 'google-generativeai' não encontrada. Instale com: pip install google-generativeai")
     elif "GEMINI_API_KEY" not in st.secrets:
-        st.warning("Chave GEMINI_API_KEY não encontrada nos secrets. IA desativada.")
+        st.error("Chave GEMINI_API_KEY não encontrada nos secrets. Adicione-a no Streamlit Cloud.")
 
+    # Se ainda não conseguiu, tenta gemini-pro (fallback)
+    if not gemini_ok and GEMINI_DISPONIVEL and "GEMINI_API_KEY" in st.secrets:
+        try:
+            genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+            client = genai.GenerativeModel('gemini-pro')
+            test_response = client.generate_content("OK")
+            if test_response.text:
+                gemini_ok = True
+                st.success("✅ Gemini conectado com modelo gemini-pro!")
+        except:
+            pass
+            
     # --- CONSTANTES ---
     MESES = {"Janeiro":1,"Fevereiro":2,"Março":3,"Abril":4,"Maio":5,"Junho":6,
              "Julho":7,"Agosto":8,"Setembro":9,"Outubro":10,"Novembro":11,"Dezembro":12}

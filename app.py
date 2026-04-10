@@ -3,6 +3,7 @@ import pandas as pd
 import json
 import gspread
 import plotly.express as px
+import math
 from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 from fpdf import FPDF
@@ -40,18 +41,32 @@ if check_password():
              "Julho":7,"Agosto":8,"Setembro":9,"Outubro":10,"Novembro":11,"Dezembro":12}
     CATEGORIAS_PADRAO_BASE = ["Alimentação","Transporte","Lazer","Saúde","Casa","Trabalho","Outros"]
 
-    # --- FUNÇÕES DE SEGURANÇA PARA CONVERSÃO DE DADOS ---
+    # --- FUNÇÕES SUPER SEGURAS DE LIMPEZA DE DADOS (Resolve o erro InvalidJSONError) ---
     def safe_float(val, default=0.0):
         try:
-            return float(val)
-        except (ValueError, TypeError):
-            return default
+            v = float(val)
+            if math.isnan(v) or math.isinf(v): return default
+            return v
+        except: return default
 
     def safe_int(val, default=1):
         try:
-            return int(float(val))
-        except (ValueError, TypeError):
-            return default
+            v = float(val)
+            if math.isnan(v) or math.isinf(v): return default
+            return int(v)
+        except: return default
+
+    def safe_str(val):
+        try:
+            if pd.isna(val): return ""
+            return str(val)
+        except: return ""
+
+    def safe_bool(val):
+        try:
+            if pd.isna(val): return False
+            return str(val).strip().lower() == 'true'
+        except: return False
 
     # --- NOVA CONEXÃO GOOGLE SHEETS ---
     @st.cache_resource
@@ -67,7 +82,7 @@ if check_password():
         st.error(f"Erro de conexão com a nuvem. Verifique a planilha e a chave. Erro: {e}")
         st.stop()
 
-    # --- NOVO SISTEMA DE BANCO DE DADOS (Leitura) ---
+    # --- SISTEMA DE BANCO DE DADOS (Leitura) ---
     def carregar_dados_nuvem_raw():
         db_conn = ligar_google_sheets()
         migrado_agora = False
@@ -104,7 +119,6 @@ if check_password():
                 
             return dados_antigos, migrado_agora
 
-        # Leitura Normal Segura
         dados_casuais = ws_casuais.get_all_records()
         hist_casuais = {}
         for row in dados_casuais:
@@ -166,7 +180,7 @@ if check_password():
 
         return result, migrado_agora
 
-    # --- NOVO SISTEMA DE BANCO DE DADOS (Escrita Segura) ---
+    # --- SISTEMA DE BANCO DE DADOS (Escrita Segura Total) ---
     def salvar_dados_nuvem():
         db_conn = ligar_google_sheets()
         
@@ -183,37 +197,41 @@ if check_password():
             if f"dados_{g}" in st.session_state:
                 st.session_state[f"dados_raw_{g}"] = st.session_state[f"dados_{g}"].to_dict("records")
 
-        # Escrita com as funções de segurança
+        # Escrita com higienização rigorosa contra o InvalidJSONError
         flat_casuais = [["Mes_Ano", "Data", "Categoria", "Descrição", "Valor"]]
         for ma, itens in st.session_state.historico_casuais.items():
             for item in itens:
-                flat_casuais.append([ma, str(item.get("Data","")), str(item.get("Categoria","")), str(item.get("Descrição","")), safe_float(item.get("Valor (R$)"), 0.0)])
+                flat_casuais.append([safe_str(ma), safe_str(item.get("Data","")), safe_str(item.get("Categoria","")), safe_str(item.get("Descrição","")), safe_float(item.get("Valor (R$)"), 0.0)])
                 
         flat_fixos = [["Mes_Ano", "Descrição", "Categoria", "Valor", "Pago"]]
         for ma, itens in st.session_state.historico_fixos.items():
             for item in itens:
-                flat_fixos.append([ma, str(item.get("Descrição","")), str(item.get("Categoria","")), safe_float(item.get("Valor (R$)"), 0.0), bool(item.get("Pago",False))])
+                flat_fixos.append([safe_str(ma), safe_str(item.get("Descrição","")), safe_str(item.get("Categoria","")), safe_float(item.get("Valor (R$)"), 0.0), safe_bool(item.get("Pago",False))])
                 
         flat_guias = [["Guia", "Descrição", "Categoria", "Valor Parcela", "Mês Início", "Ano Início", "Qtd Parcelas"]]
         for g in st.session_state.guias_extras:
             itens = st.session_state.get(f"dados_raw_{g}", [])
             for item in itens:
                 flat_guias.append([
-                    str(g), 
-                    str(item.get("Descrição","")), 
-                    str(item.get("Categoria","")), 
+                    safe_str(g), 
+                    safe_str(item.get("Descrição","")), 
+                    safe_str(item.get("Categoria","")), 
                     safe_float(item.get("Valor Parcela (R$)"), 0.0), 
                     safe_int(item.get("Mês Início (1-12)"), 1), 
                     safe_int(item.get("Ano Início"), 2026), 
                     safe_int(item.get("Qtd Parcelas"), 1)
                 ])
 
+        renda_limpa = {}
+        for ma, itens in st.session_state.renda_por_mes.items():
+            renda_limpa[safe_str(ma)] = [{"Fonte": safe_str(i.get("Fonte","")), "Valor (R$)": safe_float(i.get("Valor (R$)",0))} for i in itens]
+
         config_json = {
-            "guias_extras": st.session_state.guias_extras,
-            "categorias_personalizadas": st.session_state.categorias_personalizadas,
-            "categorias_padrao": st.session_state.categorias_padrao,
-            "renda_por_mes": st.session_state.renda_por_mes,
-            "metas_orcamento": st.session_state.metas_orcamento
+            "guias_extras": [safe_str(x) for x in st.session_state.guias_extras],
+            "categorias_personalizadas": [safe_str(x) for x in st.session_state.categorias_personalizadas],
+            "categorias_padrao": [safe_str(x) for x in st.session_state.categorias_padrao],
+            "renda_por_mes": renda_limpa,
+            "metas_orcamento": {safe_str(k): safe_float(v) for k, v in st.session_state.metas_orcamento.items()}
         }
 
         ws_casuais = db_conn.worksheet("Casuais")

@@ -39,16 +39,6 @@ def check_password():
     else:
         return True
 
-# DEBUG - Mostrar dados carregados
-with st.expander("🔧 Debug (remover depois)"):
-        st.write("Chave atual:", f"{st.session_state.mes_atual}_{st.session_state.ano_atual}")
-        st.write("Histórico Fixos - chaves disponíveis:", list(st.session_state.historico_fixos.keys()))
-        st.write("Histórico Casuais - chaves disponíveis:", list(st.session_state.historico_casuais.keys()))
-        st.write("Renda por mês - chaves:", list(st.session_state.renda_por_mes.keys()))
-            if st.session_state.historico_fixos:
-        primeira_chave = list(st.session_state.historico_fixos.keys())[0]
-        st.write(f"Exemplo de fixos da chave {primeira_chave}:", st.session_state.historico_fixos[primeira_chave][:2])
-
 # --- 2. INÍCIO DO APLICATIVO ---
 if check_password():
     st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="centered")

@@ -34,14 +34,6 @@ def check_password():
     else:
         return True
 
-# FORÇAR RECARGA COMPLETA DOS DADOS (remova depois)
-if "force_reload" not in st.session_state:
-    st.session_state.force_reload = False
-if st.sidebar.button("🔄 FORÇAR RECARGA TOTAL"):
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-    st.rerun()
-
 # --- 2. INÍCIO DO APLICATIVO ---
 if check_password():
     st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="centered")

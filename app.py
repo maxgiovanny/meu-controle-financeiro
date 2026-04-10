@@ -827,43 +827,56 @@ if check_password():
 
     elif sel == "Metas de Orçamento":
         st.subheader("🎯 Metas e Limites Mensais")
-        st.write("Defina um orçamento para cada categoria. Para editar, altere o valor na tabela. Para apagar, selecione a linha e aperte 'Delete' ou limpe o nome da categoria.")
+        st.write("Defina quanto pretende gastar em cada categoria. O sistema avisará se você ultrapassar o limite.")
         
-        # 1. Formatar os dados das metas para a tabela
+        # 1. Preparar os dados atuais
         df_metas_existentes = pd.DataFrame([
             {"Categoria": k, "Limite (R$)": v} for k, v in st.session_state.metas_orcamento.items()
         ])
 
-        # 2. Editor de Metas (Lápis e X integrados)
+        # 2. Tabela Interativa com Menu Suspenso Integrado
+        # O segredo está no column_config: definimos a coluna 'Categoria' como um Selectbox
         ed_metas = st.data_editor(
             df_metas_existentes,
             num_rows="dynamic",
             use_container_width=True,
             hide_index=True,
             column_config={
-                "Categoria": st.column_config.SelectboxColumn(options=get_categorias(), required=True),
-                "Limite (R$)": st.column_config.NumberColumn(format="R$ %.2f", min_value=0)
+                "Categoria": st.column_config.SelectboxColumn(
+                    "Categoria",
+                    help="Selecione a categoria para definir a meta",
+                    options=get_categorias(), # Puxa todas as suas categorias padrão e personalizadas
+                    required=True,
+                ),
+                "Limite (R$)": st.column_config.NumberColumn(
+                    "Limite (R$)",
+                    help="Valor máximo planejado para o mês",
+                    format="R$ %.2f",
+                    min_value=0,
+                    required=True
+                )
             },
-            key="editor_metas_global"
+            key="editor_metas_v2"
         )
 
-        # 3. Botão para Sincronizar Alterações
-        if st.button("💾 Salvar Alterações nas Metas"):
-            # Converte de volta para o dicionário do sistema, removendo linhas vazias
+        # 3. Botão de Salvamento
+        col_btn, _ = st.columns([1, 2])
+        if col_btn.button("💾 Salvar Configurações de Metas", use_container_width=True):
+            # Limpeza de dados para evitar erros de JSON (NaN ou categorias vazias)
             novas_metas = {
-                row["Categoria"]: safe_float(row["Limite (R$)"]) 
-                for _, row in ed_metas.iterrows() if row["Categoria"]
+                safe_str(row["Categoria"]): safe_float(row["Limite (R$)"]) 
+                for _, row in ed_metas.iterrows() if safe_str(row["Categoria"])
             }
             st.session_state.metas_orcamento = novas_metas
             salvar_dados_nuvem()
             st.rerun()
 
-        st.markdown("---")
-        st.subheader("📊 Acompanhamento em Tempo Real")
+        st.divider()
+        st.subheader("📊 Gráficos de Controle")
         
         metas_ativas = st.session_state.metas_orcamento
         if not metas_ativas:
-            st.info("Nenhuma meta definida acima.")
+            st.info("💡 Clique no '+' acima para adicionar a sua primeira meta orçamentária.")
         else:
             for cat, limite in metas_ativas.items():
                 gasto_atual = gastos_categoria.get(cat, 0.0)
@@ -871,18 +884,24 @@ if check_password():
                     perc = gasto_atual / limite
                     perc_visual = min(perc, 1.0)
                     
-                    col_texto, col_valor = st.columns([3, 1])
-                    col_texto.write(f"**{cat}**")
-                    col_valor.write(f"{gasto_atual:.2f} / {limite:.2f}")
+                    # Layout visual do progresso
+                    st.write(f"**{cat}**")
+                    c1, c2 = st.columns([4, 1])
                     
-                    # Cor da barra: Verde se OK, Vermelho se estourou
-                    cor_barra = "normal" if perc < 1.0 else "red"
-                    st.progress(perc_visual)
+                    # Alerta visual: Muda a cor se passar de 100%
+                    if perc < 0.8:
+                        c1.progress(perc_visual)
+                    elif perc < 1.0:
+                        c1.progress(perc_visual) # Streamlit padrão é azul/verde
+                    else:
+                        c1.error("Progresso: 100%+") # Mostra barra vermelha em caso de estouro
+                    
+                    c2.write(f"R$ {gasto_atual:.2f} / {limite:.2f}")
                     
                     if perc >= 1.0:
-                        st.error(f"⚠️ Limite de {cat} ultrapassado em R$ {gasto_atual - limite:.2f}")
+                        st.warning(f"🚨 Você excedeu o limite de **{cat}** em {formatar_moeda(gasto_atual - limite)}")
                 else:
-                    st.write(f"**{cat}**: Limite não definido ou zero.")
+                    st.caption(f"ℹ️ {cat}: Limite definido como zero.")
 
     elif sel == "Pesquisa Global":
         st.subheader("🔍 Procurar no Histórico")

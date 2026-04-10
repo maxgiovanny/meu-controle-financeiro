@@ -40,13 +40,25 @@ if check_password():
              "Julho":7,"Agosto":8,"Setembro":9,"Outubro":10,"Novembro":11,"Dezembro":12}
     CATEGORIAS_PADRAO_BASE = ["Alimentação","Transporte","Lazer","Saúde","Casa","Trabalho","Outros"]
 
-    # --- NOVA CONEXÃO GOOGLE SHEETS (Retorna a planilha inteira) ---
+    # --- FUNÇÕES DE SEGURANÇA PARA CONVERSÃO DE DADOS ---
+    def safe_float(val, default=0.0):
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return default
+
+    def safe_int(val, default=1):
+        try:
+            return int(float(val))
+        except (ValueError, TypeError):
+            return default
+
+    # --- NOVA CONEXÃO GOOGLE SHEETS ---
     @st.cache_resource
     def ligar_google_sheets():
         creds_dict = json.loads(st.secrets["gcp_service_account"])
         scopes = ["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-        # Atenção: agora retorna a planilha completa, não apenas a sheet1
         return gspread.authorize(creds).open_by_url(st.secrets["url_planilha"])
 
     try:
@@ -55,7 +67,7 @@ if check_password():
         st.error(f"Erro de conexão com a nuvem. Verifique a planilha e a chave. Erro: {e}")
         st.stop()
 
-    # --- NOVO SISTEMA DE BANCO DE DADOS (Leitura Relacional) ---
+    # --- NOVO SISTEMA DE BANCO DE DADOS (Leitura) ---
     def carregar_dados_nuvem_raw():
         db_conn = ligar_google_sheets()
         migrado_agora = False
@@ -67,12 +79,19 @@ if check_password():
             ws_guias = db_conn.worksheet("Guias")
         except gspread.exceptions.WorksheetNotFound:
             migrado_agora = True
-            # --- MOTOR DE MIGRAÇÃO AUTOMÁTICA ---
-            ws_original = db_conn.sheet1
+            # Tentar achar a aba antiga
+            try:
+                ws_original = db_conn.worksheet("Página 1")
+            except:
+                try:
+                    ws_original = db_conn.sheet1
+                except:
+                    st.error("Erro fatal: Aba antiga não encontrada para migração.")
+                    st.stop()
+
             val = ws_original.acell('A1').value
             dados_antigos = json.loads(val) if val else {}
             
-            # Criar as novas abas
             db_conn.add_worksheet("Casuais", rows=1000, cols=5)
             db_conn.add_worksheet("Fixos", rows=1000, cols=5)
             db_conn.add_worksheet("Guias", rows=1000, cols=7)
@@ -81,11 +100,11 @@ if check_password():
             try:
                 ws_original.update_title("Backup_Antigo")
             except:
-                pass # Caso já exista algo com esse nome
+                pass 
                 
             return dados_antigos, migrado_agora
 
-        # --- LEITURA NORMAL (Pós-migração) ---
+        # Leitura Normal Segura
         dados_casuais = ws_casuais.get_all_records()
         hist_casuais = {}
         for row in dados_casuais:
@@ -96,7 +115,7 @@ if check_password():
                 "Data": str(row.get("Data", "")),
                 "Categoria": str(row.get("Categoria", "")),
                 "Descrição": str(row.get("Descrição", "")),
-                "Valor (R$)": float(row.get("Valor", 0))
+                "Valor (R$)": safe_float(row.get("Valor", 0))
             })
 
         dados_fixos = ws_fixos.get_all_records()
@@ -108,7 +127,7 @@ if check_password():
             hist_fixos[ma].append({
                 "Descrição": str(row.get("Descrição", "")),
                 "Categoria": str(row.get("Categoria", "")),
-                "Valor (R$)": float(row.get("Valor", 0)),
+                "Valor (R$)": safe_float(row.get("Valor", 0)),
                 "Pago": str(row.get("Pago", "")).strip().lower() == 'true'
             })
 
@@ -121,10 +140,10 @@ if check_password():
             dict_guias[g].append({
                 "Descrição": str(row.get("Descrição", "")),
                 "Categoria": str(row.get("Categoria", "")),
-                "Valor Parcela (R$)": float(row.get("Valor Parcela", 0)),
-                "Mês Início (1-12)": int(row.get("Mês Início", 1)),
-                "Ano Início": int(row.get("Ano Início", 2026)),
-                "Qtd Parcelas": int(row.get("Qtd Parcelas", 1))
+                "Valor Parcela (R$)": safe_float(row.get("Valor Parcela", 0)),
+                "Mês Início (1-12)": safe_int(row.get("Mês Início", 1)),
+                "Ano Início": safe_int(row.get("Ano Início", 2026)),
+                "Qtd Parcelas": safe_int(row.get("Qtd Parcelas", 1))
             })
 
         val_conf = ws_config.acell('A1').value
@@ -147,11 +166,10 @@ if check_password():
 
         return result, migrado_agora
 
-    # --- NOVO SISTEMA DE BANCO DE DADOS (Escrita Relacional) ---
+    # --- NOVO SISTEMA DE BANCO DE DADOS (Escrita Segura) ---
     def salvar_dados_nuvem():
         db_conn = ligar_google_sheets()
         
-        # 1. Atualizar state com o mês atual antes de extrair
         chave = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
         casuais_save = st.session_state.gastos_casuais.copy()
         if "Data" in casuais_save.columns:
@@ -161,27 +179,34 @@ if check_password():
         st.session_state.historico_casuais[chave] = casuais_save.to_dict("records")
         st.session_state.renda_por_mes[chave] = st.session_state.renda_detalhada.to_dict("records")
         
-        # Colocar guias no formato cru no state para salvar
         for g in st.session_state.guias_extras:
             if f"dados_{g}" in st.session_state:
                 st.session_state[f"dados_raw_{g}"] = st.session_state[f"dados_{g}"].to_dict("records")
 
-        # 2. Achatar os dicionários para linhas planas (Rows)
+        # Escrita com as funções de segurança
         flat_casuais = [["Mes_Ano", "Data", "Categoria", "Descrição", "Valor"]]
         for ma, itens in st.session_state.historico_casuais.items():
             for item in itens:
-                flat_casuais.append([ma, str(item.get("Data","")), str(item.get("Categoria","")), str(item.get("Descrição","")), float(item.get("Valor (R$)",0))])
+                flat_casuais.append([ma, str(item.get("Data","")), str(item.get("Categoria","")), str(item.get("Descrição","")), safe_float(item.get("Valor (R$)"), 0.0)])
                 
         flat_fixos = [["Mes_Ano", "Descrição", "Categoria", "Valor", "Pago"]]
         for ma, itens in st.session_state.historico_fixos.items():
             for item in itens:
-                flat_fixos.append([ma, str(item.get("Descrição","")), str(item.get("Categoria","")), float(item.get("Valor (R$)",0)), bool(item.get("Pago",False))])
+                flat_fixos.append([ma, str(item.get("Descrição","")), str(item.get("Categoria","")), safe_float(item.get("Valor (R$)"), 0.0), bool(item.get("Pago",False))])
                 
         flat_guias = [["Guia", "Descrição", "Categoria", "Valor Parcela", "Mês Início", "Ano Início", "Qtd Parcelas"]]
         for g in st.session_state.guias_extras:
             itens = st.session_state.get(f"dados_raw_{g}", [])
             for item in itens:
-                flat_guias.append([str(g), str(item.get("Descrição","")), str(item.get("Categoria","")), float(item.get("Valor Parcela (R$)",0)), int(item.get("Mês Início (1-12)",1)), int(item.get("Ano Início",2026)), int(item.get("Qtd Parcelas",1))])
+                flat_guias.append([
+                    str(g), 
+                    str(item.get("Descrição","")), 
+                    str(item.get("Categoria","")), 
+                    safe_float(item.get("Valor Parcela (R$)"), 0.0), 
+                    safe_int(item.get("Mês Início (1-12)"), 1), 
+                    safe_int(item.get("Ano Início"), 2026), 
+                    safe_int(item.get("Qtd Parcelas"), 1)
+                ])
 
         config_json = {
             "guias_extras": st.session_state.guias_extras,
@@ -191,7 +216,6 @@ if check_password():
             "metas_orcamento": st.session_state.metas_orcamento
         }
 
-        # 3. Reescrever as abas com os dados estruturados
         ws_casuais = db_conn.worksheet("Casuais")
         ws_casuais.clear()
         ws_casuais.update(values=flat_casuais, range_name='A1')
@@ -271,10 +295,10 @@ if check_password():
         df_v = df.dropna(subset=["Descrição","Valor Parcela (R$)"])
         for _, r in df_v[df_v["Descrição"]!=""].iterrows():
             try:
-                m_i = int(r["Mês Início (1-12)"])
-                a_i = int(r["Ano Início"])
-                qtd = int(r["Qtd Parcelas"])
-                v = float(r["Valor Parcela (R$)"])
+                m_i = safe_int(r["Mês Início (1-12)"])
+                a_i = safe_int(r["Ano Início"])
+                qtd = safe_int(r["Qtd Parcelas"])
+                v = safe_float(r["Valor Parcela (R$)"])
                 alvo = a*12 + m
                 ini = a_i*12 + m_i
                 if ini <= alvo <= (ini+qtd-1):
@@ -421,7 +445,6 @@ if check_password():
         carregar_dados_sessao()
         st.session_state.dados_carregados = True
         
-        # O Ponto Alto: Se a app acabou de montar as abas, ela preenche os dados automaticamente!
         if migrado_agora:
             salvar_dados_nuvem()
             st.success("✅ O seu Banco de Dados foi migrado com sucesso para a arquitetura multi-abas!")

@@ -34,14 +34,13 @@ def check_password():
     else:
         return True
 
-# DEBUG - Verificar dados carregados
-        st.write("**Debug - Valores atuais:**")
-        st.write(f"t_fix = {t_fix}")
-        st.write(f"t_cas = {t_cas}")
-        st.write(f"total_guias = {total_guias}")
-        st.write(f"total_renda = {total_renda}")
-        st.write(f"gastos_fixos shape: {st.session_state.gastos_fixos.shape if hasattr(st.session_state, 'gastos_fixos') else 'N/A'}")
-        st.write(f"gastos_casuais shape: {st.session_state.gastos_casuais.shape if hasattr(st.session_state, 'gastos_casuais') else 'N/A'}")
+# FORÇAR RECARGA COMPLETA DOS DADOS (remova depois)
+if "force_reload" not in st.session_state:
+    st.session_state.force_reload = False
+if st.sidebar.button("🔄 FORÇAR RECARGA TOTAL"):
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.rerun()
 
 # --- 2. INÍCIO DO APLICATIVO ---
 if check_password():

@@ -12,9 +12,9 @@ import unicodedata
 import tempfile
 import os
 
-# --- TENTAR IMPORTAR GEMINI ---
+# --- TENTAR IMPORTAR GEMINI (biblioteca estável) ---
 try:
-    from google import genai
+    import google.generativeai as genai
     GEMINI_DISPONIVEL = True
 except ImportError:
     GEMINI_DISPONIVEL = False
@@ -44,16 +44,18 @@ def check_password():
 if check_password():
     st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="centered")
 
-    # --- VERIFICAÇÃO DA CHAVE GEMINI ---
+    # --- VERIFICAÇÃO DA CHAVE GEMINI (usando google.generativeai) ---
     gemini_ok = False
     if GEMINI_DISPONIVEL and "GEMINI_API_KEY" in st.secrets:
         try:
-            client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+            genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+            # Testa um modelo disponível
+            client = genai.GenerativeModel('gemini-1.5-flash')
             gemini_ok = True
         except Exception as e:
             st.warning(f"Erro ao inicializar Gemini: {e}")
     elif not GEMINI_DISPONIVEL:
-        st.warning("Biblioteca 'google-genai' não instalada. IA desativada.")
+        st.warning("Biblioteca 'google-generativeai' não instalada. Execute: pip install google-generativeai")
     elif "GEMINI_API_KEY" not in st.secrets:
         st.warning("Chave GEMINI_API_KEY não encontrada nos secrets. IA desativada.")
 
@@ -64,27 +66,20 @@ if check_password():
 
     # --- FUNÇÕES DE FORMATAÇÃO BRASILEIRA ---
     def formatar_moeda_br(valor):
-        """Formata um número para o padrão brasileiro: R$ 1.234,56"""
         if valor is None:
             valor = 0.0
         return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
     def moeda_para_float(valor_str):
-        """Converte string com formato brasileiro (R$ 1.234,56) para float"""
         if valor_str is None or valor_str == "":
             return 0.0
         if isinstance(valor_str, (int, float)):
             return float(valor_str)
         s = str(valor_str).strip()
-        # Remove "R$" se existir
         s = re.sub(r'^R\$', '', s)
-        # Remove espaços
         s = s.replace(" ", "")
-        # Troca vírgula decimal por ponto
         s = s.replace(",", ".")
-        # Remove qualquer caractere que não seja dígito, ponto ou sinal de menos
         s = re.sub(r'[^\d.-]', '', s)
-        # Trata múltiplos pontos (ex: 1.234.567,89 -> 1234567.89)
         if s.count('.') > 1:
             partes = s.split('.')
             s = ''.join(partes[:-1]) + '.' + partes[-1]
@@ -262,7 +257,7 @@ if check_password():
             if f"dados_{g}" in st.session_state:
                 st.session_state[f"dados_raw_{g}"] = st.session_state[f"dados_{g}"].to_dict("records")
 
-        # Preparar dados planos (valores em float, sem formatação)
+        # Preparar dados planos
         flat_casuais = [["Mes_Ano", "Data", "Categoria", "Descrição", "Valor"]]
         for ma, itens in st.session_state.historico_casuais.items():
             for item in itens:
@@ -299,7 +294,6 @@ if check_password():
             "metas_orcamento": {safe_str(k): safe_float(v) for k, v in st.session_state.metas_orcamento.items()}
         }
 
-        # Atualizar abas (valores numéricos, sem formatação)
         ws_casuais = db_conn.worksheet("Casuais")
         ws_casuais.clear()
         ws_casuais.update(values=flat_casuais, range_name='A1')
@@ -497,8 +491,8 @@ if check_password():
         os.remove(temp_path)
         return pdf_data
 
-    # --- FUNÇÕES DE IA (GEMINI) ---
-    @st.cache_data(ttl=3600) # <- ADICIONE ESTA LINHA (Guarda a análise por 1 hora)
+    # --- FUNÇÕES DE IA (GEMINI) - USANDO google.generativeai ---
+    @st.cache_data(ttl=3600)
     def analise_financeira_gemini(renda_total, despesa_total, sobra, gastos_categoria):
         if not gemini_ok:
             return "IA não disponível. Verifique a chave da API ou a instalação da biblioteca."
@@ -514,39 +508,29 @@ if check_password():
         Seja encorajador e direto.
         """
         try:
-            resposta = client.models.generate_content(
-                model="gemini-1.5-pro",
-                contents=prompt,
-                config={'temperature': 0.7, 'max_output_tokens': 300}
-            )
-            return resposta.text
+            response = client.generate_content(prompt)
+            return response.text
         except Exception as e:
-            # --- MELHORIA AQUI: Captura o erro de cota e avisa o usuário ---
             if "429" in str(e):
-                return "⚠️ O limite de consultas gratuitas foi atingido. Por favor, aguarde cerca de 1 minuto e tente novamente."
+                return "⚠️ O limite de consultas gratuitas foi atingido. Aguarde 1 minuto e tente novamente."
             return f"Erro na IA: {e}"
 
-    @st.cache_data(ttl=86400) # <- ADICIONE ESTA LINHA (Guarda as sugestões por 24 horas)
+    @st.cache_data(ttl=86400)
     def sugerir_categoria_gemini(descricao):
         if not gemini_ok:
-            return "IA indisponível"
+            return "Outros"
         categorias_disponiveis = get_categorias()
         prompt = f"""
         Com base na descrição da despesa, sugira a categoria mais adequada.
         Categorias possíveis: {', '.join(categorias_disponiveis)}.
         Responda APENAS com o nome da categoria.
-        Descriçao: "{descricao}"
+        Descrição: "{descricao}"
         Categoria sugerida:
         """
         try:
-            resposta = client.models.generate_content(
-                model="gemini-1.5-pro",
-                contents=prompt,
-                config={'temperature': 0.2, 'max_output_tokens': 20}
-            )
-            return resposta.text.strip()
+            response = client.generate_content(prompt)
+            return response.text.strip()
         except Exception as e:
-            # Se der erro de cota na sugestão, apenas retorna "Outros" sem travar o app
             return "Outros"
 
     # --- INICIALIZAÇÃO ---
@@ -751,10 +735,9 @@ if check_password():
                             salvar_dados_nuvem()
                             st.rerun()
                             
-   # --- BOTÃO DE SAIR ---
+        # --- BOTÃO DE SAIR ---
         st.divider()
         if st.button("🚪 Sair do App", use_container_width=True):
-            # Limpa o estado de login e força recarregamento
             for key in list(st.session_state.keys()):
                 del st.session_state[key]
             st.rerun()
@@ -887,7 +870,6 @@ if check_password():
                         st.rerun()
                     else: st.warning("Por favor, preencha a descrição.")
             
-            # --- Bloco da IA movido para baixo do formulário ---
             st.divider()
             desc_temp = st.text_input("Não sabe a categoria? Digite a descrição aqui para sugestão:", key="desc_sugestao_fixo")
             if st.button("✨ Sugerir categoria via IA", key="sugerir_fixo"):
@@ -931,7 +913,6 @@ if check_password():
                         st.rerun()
                     else: st.warning("A descrição não pode estar vazia.")
             
-            # --- Bloco da IA movido para baixo do formulário ---
             st.divider()
             desc_temp = st.text_input("Não sabe a categoria? Digite a descrição aqui para sugestão:", key="desc_sugestao_casual")
             if st.button("✨ Sugerir categoria via IA", key="sugerir_casual"):
@@ -1065,8 +1046,11 @@ if check_password():
             st.metric("💰 Total Geral de Todas as Guias", formatar_moeda_br(total_geral))
             df_guias['Custo Total (R$)'] = df_guias['Custo Total (R$)'].apply(formatar_moeda_br)
             st.dataframe(df_guias, use_container_width=True, hide_index=True)
-            fig_guias = px.bar(df_guias, x="Guia", y=df_guias['Custo Total (R$)'].str.replace('R$ ', '').str.replace('.', '').str.replace(',', '.').astype(float), color="Guia", text_auto='.2f')
-            st.plotly_chart(fig_guias, use_container_width=True)
+            # Gráfico (usar valores numéricos)
+            df_guias_num = pd.DataFrame(dados_guias)
+            if not df_guias_num.empty:
+                fig_guias = px.bar(df_guias_num, x="Guia", y="Custo Total (R$)", color="Guia", text_auto='.2f')
+                st.plotly_chart(fig_guias, use_container_width=True)
         else:
             st.info("Nenhuma guia extra criada.")
         
@@ -1076,8 +1060,11 @@ if check_password():
             df_cat = pd.DataFrame(gastos_categoria.items(), columns=["Categoria","Valor (R$)"]).sort_values("Valor (R$)", ascending=False)
             df_cat['Valor (R$)'] = df_cat['Valor (R$)'].apply(formatar_moeda_br)
             st.dataframe(df_cat, use_container_width=True, hide_index=True)
-            fig_cat = px.bar(df_cat, x="Categoria", y=df_cat['Valor (R$)'].str.replace('R$ ', '').str.replace('.', '').str.replace(',', '.').astype(float), color="Categoria", text_auto='.2f')
-            st.plotly_chart(fig_cat, use_container_width=True)
+            # Gráfico
+            df_cat_num = pd.DataFrame(gastos_categoria.items(), columns=["Categoria","Valor (R$)"]).sort_values("Valor (R$)", ascending=False)
+            if not df_cat_num.empty:
+                fig_cat = px.bar(df_cat_num, x="Categoria", y="Valor (R$)", color="Categoria", text_auto='.2f')
+                st.plotly_chart(fig_cat, use_container_width=True)
         else:
             st.info("Nenhum gasto registado neste mês.")
 
@@ -1090,7 +1077,6 @@ if check_password():
         st.divider()
         
         with st.expander(f"➕ Novo Lançamento em {sel}", expanded=False):
-            # 1. Formulário de Registro (Sempre no topo)
             with st.form(f"form_nova_guia_{sel}"):
                 c1, c2 = st.columns(2)
                 n_desc = c1.text_input("Descrição da Compra")
@@ -1119,7 +1105,6 @@ if check_password():
                     else:
                         st.warning("Por favor, preencha a descrição.")
 
-            # 2. Ferramenta de IA (Agora posicionada abaixo do botão de guardar)
             st.divider()
             desc_temp = st.text_input("Dúvida na categoria? Digite a descrição para sugestão:", key=f"desc_sugestao_{sel}")
             if st.button("✨ Sugerir categoria via IA", key=f"sugerir_guia_{sel}"):

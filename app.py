@@ -34,6 +34,15 @@ def check_password():
     else:
         return True
 
+# DEBUG - Verificar dados carregados
+        st.write("**Debug - Valores atuais:**")
+        st.write(f"t_fix = {t_fix}")
+        st.write(f"t_cas = {t_cas}")
+        st.write(f"total_guias = {total_guias}")
+        st.write(f"total_renda = {total_renda}")
+        st.write(f"gastos_fixos shape: {st.session_state.gastos_fixos.shape if hasattr(st.session_state, 'gastos_fixos') else 'N/A'}")
+        st.write(f"gastos_casuais shape: {st.session_state.gastos_casuais.shape if hasattr(st.session_state, 'gastos_casuais') else 'N/A'}")
+
 # --- 2. INÍCIO DO APLICATIVO ---
 if check_password():
     st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="centered")

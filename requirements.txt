@@ -1,6 +1,7 @@
+streamlit
 pandas
 gspread
 google-auth
 plotly
-fpdf2
+fpdf
 google-genai

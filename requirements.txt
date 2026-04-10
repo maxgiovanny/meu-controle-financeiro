@@ -3,3 +3,4 @@ gspread
 google-auth
 plotly
 fpdf2
+google-genai

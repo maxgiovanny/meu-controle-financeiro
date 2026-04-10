@@ -498,6 +498,7 @@ if check_password():
         return pdf_data
 
     # --- FUNÇÕES DE IA (GEMINI) ---
+    @st.cache_data(ttl=3600) # <- ADICIONE ESTA LINHA (Guarda a análise por 1 hora)
     def analise_financeira_gemini(renda_total, despesa_total, sobra, gastos_categoria):
         if not gemini_ok:
             return "IA não disponível. Verifique a chave da API ou a instalação da biblioteca."
@@ -520,8 +521,12 @@ if check_password():
             )
             return resposta.text
         except Exception as e:
+            # --- MELHORIA AQUI: Captura o erro de cota e avisa o usuário ---
+            if "429" in str(e):
+                return "⚠️ O limite de consultas gratuitas foi atingido. Por favor, aguarde cerca de 1 minuto e tente novamente."
             return f"Erro na IA: {e}"
 
+    @st.cache_data(ttl=86400) # <- ADICIONE ESTA LINHA (Guarda as sugestões por 24 horas)
     def sugerir_categoria_gemini(descricao):
         if not gemini_ok:
             return "IA indisponível"
@@ -530,7 +535,7 @@ if check_password():
         Com base na descrição da despesa, sugira a categoria mais adequada.
         Categorias possíveis: {', '.join(categorias_disponiveis)}.
         Responda APENAS com o nome da categoria.
-        Descrição: "{descricao}"
+        Descriçao: "{descricao}"
         Categoria sugerida:
         """
         try:
@@ -541,6 +546,7 @@ if check_password():
             )
             return resposta.text.strip()
         except Exception as e:
+            # Se der erro de cota na sugestão, apenas retorna "Outros" sem travar o app
             return "Outros"
 
     # --- INICIALIZAÇÃO ---

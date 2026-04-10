@@ -4,4 +4,4 @@ gspread
 google-auth
 plotly
 fpdf
-google-generativeai
+google-genai

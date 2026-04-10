@@ -94,18 +94,15 @@ if check_password():
         try:
             ws_config = db_conn.worksheet("Configuracoes")
             val_conf = ws_config.acell('A1').value
-            # Se a aba existe mas está vazia, a migração quebrou no meio!
             if not val_conf or len(val_conf.strip()) < 5:
                 precisa_migrar = True
         except gspread.exceptions.WorksheetNotFound:
-            # Se a aba nem existe, é a primeira vez rodando
             precisa_migrar = True
             
-        # 2. MOTOR DE MIGRAÇÃO (Roda se for a 1ª vez OU se tiver de consertar o erro anterior)
+        # 2. MOTOR DE MIGRAÇÃO
         if precisa_migrar:
             migrado_agora = True
             
-            # Limpar as abas defeituosas do erro anterior (Auto-Reparação)
             for aba in ["Casuais", "Fixos", "Guias", "Configuracoes"]:
                 try:
                     t = db_conn.worksheet(aba)
@@ -113,33 +110,29 @@ if check_password():
                 except:
                     pass
             
-            # Tentar achar a aba original com os seus dados valiosos
             try:
                 ws_original = db_conn.worksheet("Backup_Antigo")
             except gspread.exceptions.WorksheetNotFound:
                 try:
                     ws_original = db_conn.worksheet("Página 1")
                 except gspread.exceptions.WorksheetNotFound:
-                    ws_original = db_conn.sheet1 # Se tudo falhar, pega a aba 1
+                    ws_original = db_conn.sheet1
             
-            # Extrair o tesouro (os dados originais)
             val = ws_original.acell('A1').value
             dados_antigos = json.loads(val) if val else {}
             
-            # Criar as fundações novas e limpas
             db_conn.add_worksheet("Casuais", rows=1000, cols=5)
             db_conn.add_worksheet("Fixos", rows=1000, cols=5)
             db_conn.add_worksheet("Guias", rows=1000, cols=7)
             db_conn.add_worksheet("Configuracoes", rows=100, cols=2)
             
-            # Renomear para não haver confusão futura
             if ws_original.title != "Backup_Antigo":
                 try: ws_original.update_title("Backup_Antigo")
                 except: pass 
                 
             return dados_antigos, migrado_agora
 
-        # 3. LEITURA NORMAL (Após a base de dados estar perfeita)
+        # 3. LEITURA NORMAL
         ws_casuais = db_conn.worksheet("Casuais")
         ws_fixos = db_conn.worksheet("Fixos")
         ws_guias = db_conn.worksheet("Guias")
@@ -223,7 +216,6 @@ if check_password():
             if f"dados_{g}" in st.session_state:
                 st.session_state[f"dados_raw_{g}"] = st.session_state[f"dados_{g}"].to_dict("records")
 
-        # Escrita com higienização rigorosa contra o erro InvalidJSONError
         flat_casuais = [["Mes_Ano", "Data", "Categoria", "Descrição", "Valor"]]
         for ma, itens in st.session_state.historico_casuais.items():
             for item in itens:
@@ -765,11 +757,15 @@ if check_password():
 
     elif sel == "Gastos Fixos":
         ct, cb = st.columns([3,1])
-        ct.subheader("📌 Contas Fixas")
-        if cb.button("🔄 Importar de Mês Anterior"):
-            carregar_dados_sessao(True)
-            salvar_dados_nuvem()
-            st.rerun()
+        with ct:
+            st.subheader("📌 Contas Fixas")
+            st.subheader(f"Total no Mês: R$ {t_fix:,.2f}")
+        with cb:
+            st.write("")
+            if st.button("🔄 Importar de Mês Anterior"):
+                carregar_dados_sessao(True)
+                salvar_dados_nuvem()
+                st.rerun()
 
         with st.expander("➕ Lançamento Rápido de Fixos", expanded=False):
             with st.form("form_novo_fixo"):
@@ -803,6 +799,7 @@ if check_password():
 
     elif sel == "Dia a Dia":
         st.subheader("🛍️ Compras Casuais")
+        st.subheader(f"Total no Mês: R$ {t_cas:,.2f}")
 
         with st.expander("➕ Lançamento Rápido do Dia a Dia", expanded=False):
             with st.form("form_novo_casual"):

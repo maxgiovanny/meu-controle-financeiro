@@ -825,7 +825,7 @@ if check_password():
             st.session_state.gastos_casuais = ec
             salvar_dados_nuvem()
 
-        elif sel == "Metas de Orçamento":
+    elif sel == "Metas de Orçamento":
         st.subheader("🎯 Metas e Limites Mensais")
         st.write("Defina um orçamento para cada categoria e acompanhe seus gastos.")
         

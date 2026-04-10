@@ -571,15 +571,6 @@ if check_password():
         carregar_dados_sessao()
         st.session_state.dados_carregados = True
 
-        # Diagnóstico (pode remover depois)
-        with st.expander("🔧 Diagnóstico de carregamento (pode remover)"):
-            st.write(f"Total meses em fixos: {len(st.session_state.historico_fixos)}")
-            st.write(f"Total meses em casuais: {len(st.session_state.historico_casuais)}")
-            st.write(f"Mês atual: {st.session_state.mes_atual}_{st.session_state.ano_atual}")
-            st.write(f"Registros fixos carregados: {len(st.session_state.gastos_fixos)}")
-            st.write(f"Registros casuais carregados: {len(st.session_state.gastos_casuais)}")
-            st.write(f"Guias extras: {st.session_state.guias_extras}")
-
     if "pdf_ready" not in st.session_state: st.session_state.pdf_ready = False
     if "pdf_data" not in st.session_state: st.session_state.pdf_data = None
 
@@ -753,7 +744,15 @@ if check_password():
                             st.session_state.guias_extras[idx], st.session_state.guias_extras[idx+1] = st.session_state.guias_extras[idx+1], st.session_state.guias_extras[idx]
                             salvar_dados_nuvem()
                             st.rerun()
-
+                            
+   # --- BOTÃO DE SAIR ---
+        st.divider()
+        if st.button("🚪 Sair do App", use_container_width=True):
+            # Limpa o estado de login e força recarregamento
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.rerun()
+            
     # --- CÁLCULOS PRINCIPAIS ---
     mes_n = MESES[st.session_state.mes_atual]
     ano_r = st.session_state.ano_atual

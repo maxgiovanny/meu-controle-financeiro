@@ -266,7 +266,7 @@ if check_password():
 
         st.toast("💾 Dados salvos na nuvem!", icon="✅")
 
-    # --- DEMAIS FUNÇÕES AUXILIARES (manter as suas originais) ---
+    # --- DEMAIS FUNÇÕES AUXILIARES ---
     def obter_mes_anterior(mes_nome, ano_atual):
         lista = list(MESES.keys())
         idx = lista.index(mes_nome)
@@ -340,7 +340,7 @@ if check_password():
         soma_cat = df_parc.groupby("Categoria")["Valor (R$)"].sum().to_dict() if not df_parc.empty else {}
         return df_parc, total, soma_cat
 
-    # --- FUNÇÕES DE PDF (mantenha as suas originais, apenas substituí pela versão que já funcionava) ---
+    # --- FUNÇÕES DE PDF E FORMATAÇÃO ---
     def remover_acentos(texto):
         if not isinstance(texto, str): texto = str(texto)
         return unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')
@@ -488,7 +488,7 @@ if check_password():
         except Exception as e:
             return "Outros"
 
-    # --- INICIALIZAÇÃO (carrega dados da nuvem uma única vez) ---
+    # --- INICIALIZAÇÃO ---
     if "dados_carregados" not in st.session_state:
         with st.spinner("Carregando dados da nuvem..."):
             dados_raw, _ = carregar_dados_nuvem_raw()
@@ -525,7 +525,7 @@ if check_password():
     def get_categorias():
         return st.session_state.categorias_padrao + st.session_state.categorias_personalizadas
 
-    # --- SIDEBAR (configurações, PDF, categorias, guias) ---
+    # --- SIDEBAR ---
     with st.sidebar:
         st.header("⚙️ Configurações")
         if st.button("🔄 Recarregar Nuvem"):
@@ -593,7 +593,7 @@ if check_password():
                 use_container_width=True
             )
 
-        # --- GERENCIAMENTO DE CATEGORIAS (igual ao que você já tinha, mas seguro) ---
+        # --- GERENCIAMENTO DE CATEGORIAS ---
         st.divider()
         st.subheader("🏷️ Gerenciar Categorias")
         with st.expander("⚙️ Opções de categorias"):
@@ -650,7 +650,7 @@ if check_password():
                             salvar_dados_nuvem()
                             st.rerun()
 
-        # --- GERENCIAMENTO DE GUIAS (igual ao seu original) ---
+        # --- GERENCIAMENTO DE GUIAS ---
         st.divider()
         st.subheader("🛠️ Gerenciar Guias")
         with st.expander("⚙️ Opções de gerenciamento"):
@@ -700,7 +700,7 @@ if check_password():
                             salvar_dados_nuvem()
                             st.rerun()
 
-    # --- CÁLCULOS PRINCIPAIS (para exibição) ---
+    # --- CÁLCULOS PRINCIPAIS ---
     mes_n = MESES[st.session_state.mes_atual]
     ano_r = st.session_state.ano_atual
     t_fix = st.session_state.gastos_fixos["Valor (R$)"].sum() if not st.session_state.gastos_fixos.empty else 0.0
@@ -725,7 +725,6 @@ if check_password():
 
     st.title(f"💰 {st.session_state.mes_atual} / {st.session_state.ano_atual}")
 
-    # --- NAVEGAÇÃO PRINCIPAL (abas) ---
     opcoes = ["Resumo Geral", "Renda", "Gastos Fixos", "Dia a Dia", "Resumo das Guias", "Metas de Orçamento", "Pesquisa Global"] + st.session_state.guias_extras
     sel = st.selectbox("Navegação do App:", opcoes)
     st.divider()
@@ -781,7 +780,6 @@ if check_password():
                 fig_hist = px.line(df_hist, x="Mês", y=["Renda", "Despesas", "Sobra"], markers=True)
                 st.plotly_chart(fig_hist, use_container_width=True)
 
-        # --- BOTÃO DA IA ---
         st.divider()
         if st.button("🤖 Análise da IA para este mês"):
             with st.spinner("Consultando o Gemini..."):
@@ -809,15 +807,16 @@ if check_password():
                 st.rerun()
 
         with st.expander("➕ Lançamento Rápido de Fixos", expanded=False):
+            # Botão de sugestão fora do formulário
+            desc_temp = st.text_input("Descrição para sugestão:", key="desc_sugestao_fixo")
+            if st.button("✨ Sugerir categoria", key="sugerir_fixo"):
+                if desc_temp and gemini_ok:
+                    with st.spinner("IA pensando..."):
+                        sugestao = sugerir_categoria_gemini(desc_temp)
+                        st.success(f"Sugestão: **{sugestao}**")
             with st.form("form_novo_fixo"):
                 c1, c2, c3 = st.columns([2, 1, 1])
                 n_desc = c1.text_input("Descrição do Gasto")
-                # Botão de sugestão de categoria
-                if st.button("✨ Sugerir categoria", key="sugerir_fixo"):
-                    if n_desc and gemini_ok:
-                        with st.spinner("IA pensando..."):
-                            sugestao = sugerir_categoria_gemini(n_desc)
-                            st.success(f"Sugestão: **{sugestao}**")
                 n_cat = c2.selectbox("Categoria", get_categorias())
                 n_val = c3.number_input("Valor (R$)", min_value=0.0, format="%.2f")
                 if st.form_submit_button("Guardar Lançamento"):
@@ -849,15 +848,16 @@ if check_password():
         st.subheader(f"Total no Mês: R$ {t_cas:,.2f}")
 
         with st.expander("➕ Lançamento Rápido do Dia a Dia", expanded=False):
+            desc_temp = st.text_input("Descrição para sugestão:", key="desc_sugestao_casual")
+            if st.button("✨ Sugerir categoria", key="sugerir_casual"):
+                if desc_temp and gemini_ok:
+                    with st.spinner("IA pensando..."):
+                        sugestao = sugerir_categoria_gemini(desc_temp)
+                        st.success(f"Sugestão: **{sugestao}**")
             with st.form("form_novo_casual"):
                 c1, c2 = st.columns(2)
                 n_data = c1.date_input("Data do Registo", datetime.now().date())
                 n_desc = st.text_input("Descrição da Compra")
-                if st.button("✨ Sugerir categoria", key="sugerir_casual"):
-                    if n_desc and gemini_ok:
-                        with st.spinner("IA pensando..."):
-                            sugestao = sugerir_categoria_gemini(n_desc)
-                            st.success(f"Sugestão: **{sugestao}**")
                 n_cat = c2.selectbox("Categoria", get_categorias())
                 n_val = st.number_input("Valor (R$)", min_value=0.0, format="%.2f")
                 if st.form_submit_button("Guardar Registo"):
@@ -1009,22 +1009,21 @@ if check_password():
         st.divider()
         
         with st.expander(f"➕ Novo Lançamento em {sel}", expanded=False):
+            desc_temp = st.text_input("Descrição para sugestão:", key=f"desc_sugestao_{sel}")
+            if st.button("✨ Sugerir categoria", key=f"sugerir_guia_{sel}"):
+                if desc_temp and gemini_ok:
+                    with st.spinner("IA pensando..."):
+                        sugestao = sugerir_categoria_gemini(desc_temp)
+                        st.success(f"Sugestão: **{sugestao}**")
             with st.form(f"form_nova_guia_{sel}"):
                 c1, c2 = st.columns(2)
                 n_desc = c1.text_input("Descrição da Compra")
-                if st.button("✨ Sugerir categoria", key=f"sugerir_guia_{sel}"):
-                    if n_desc and gemini_ok:
-                        with st.spinner("IA pensando..."):
-                            sugestao = sugerir_categoria_gemini(n_desc)
-                            st.success(f"Sugestão: **{sugestao}**")
                 n_cat = c2.selectbox("Categoria", get_categorias())
-                
                 c3, c4, c5, c6 = st.columns(4)
                 n_val = c3.number_input("Valor Parcela (R$)", min_value=0.0, format="%.2f")
                 n_qtd = c4.number_input("Qtd Parcelas", min_value=1, step=1, value=1)
                 n_mes_ini = c5.number_input("Mês Início", min_value=1, max_value=12, step=1, value=mes_n)
                 n_ano_ini = c6.number_input("Ano Início", min_value=2000, max_value=2050, step=1, value=ano_r)
-                
                 if st.form_submit_button("Guardar Lançamento"):
                     if n_desc:
                         nova_linha = pd.DataFrame([{

@@ -527,7 +527,7 @@ if check_password():
                 return "⚠️ Limite de consultas atingido. Aguarde 1 minuto."
             return f"Erro na IA: {e}"
 
-        def sugerir_categoria_gemini(descricao):
+    def sugerir_categoria_gemini(descricao):
         if not gemini_ok or client is None:
             return "Outros"
         categorias_disponiveis = get_categorias()

@@ -19,7 +19,7 @@ try:
 except ImportError:
     GEMINI_DISPONIVEL = False
 
-## --- 1. FUNÇÃO DE SEGURANÇA (LOGIN) ---
+# --- 1. FUNÇÃO DE SEGURANÇA (LOGIN MULTI-USUÁRIO) ---
 def check_password():
     # Se a senha já estiver correta na sessão, libera o acesso
     if st.session_state.get("password_correct", False):
@@ -27,18 +27,27 @@ def check_password():
 
     st.title("🔒 Acesso Restrito")
     
-    # Cria um formulário visual com o campo de texto e o botão
     with st.form("login_form"):
-        senha_digitada = st.text_input("Digite a senha:", type="password")
+        # Agora pedimos Usuário e Senha
+        usuario_digitado = st.text_input("Usuário:").strip().lower()
+        senha_digitada = st.text_input("Senha:", type="password")
         botao_entrar = st.form_submit_button("Entrar")
 
-        # Quando o botão for clicado (ou apertar Enter)
         if botao_entrar:
-            if senha_digitada == st.secrets["password"]:
-                st.session_state["password_correct"] = True
-                st.rerun() # Recarrega a página automaticamente para abrir o app
+            # 1. Verifica se a seção "usuarios" existe e se o usuário digitado está lá
+            if "usuarios" in st.secrets and usuario_digitado in st.secrets["usuarios"]:
+                dados_usuario = st.secrets["usuarios"][usuario_digitado]
+                
+                # 2. Verifica se a senha bate com a do usuário
+                if senha_digitada == dados_usuario["senha"]:
+                    st.session_state["password_correct"] = True
+                    st.session_state["usuario_logado"] = usuario_digitado
+                    st.session_state["url_planilha"] = dados_usuario["url_planilha"]
+                    st.rerun() # Recarrega para abrir o app
+                else:
+                    st.error("😕 Senha inválida. Tente novamente.")
             else:
-                st.error("😕 Senha inválida. Tente novamente.")
+                st.error("🚫 Usuário não encontrado.")
                 
     return False
 
@@ -119,17 +128,17 @@ if check_password():
             return str(val).strip().lower() in ['true', '1', 't', 'y', 'yes']
         except: return False
 
-    # --- CONEXÃO GOOGLE SHEETS ---
+# --- CONEXÃO GOOGLE SHEETS ---
     @st.cache_resource
-    def ligar_google_sheets():
+    def ligar_google_sheets(url_da_planilha):
         creds_dict = json.loads(st.secrets["gcp_service_account"])
         scopes = ["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-        return gspread.authorize(creds).open_by_url(st.secrets["url_planilha"])
-
+        return gspread.authorize(creds).open_by_url(url_da_planilha)
+        
     # --- LEITURA DOS DADOS (COM CONVERSÃO DE MOEDA) ---
     def carregar_dados_nuvem_raw():
-        db_conn = ligar_google_sheets()
+        db_conn = ligar_google_sheets(st.session_state["url_planilha"])
         try:
             ws_casuais = db_conn.worksheet("Casuais")
             ws_fixos = db_conn.worksheet("Fixos")
@@ -238,7 +247,7 @@ if check_password():
 
     # --- ESCRITA SEGURA (protegida) ---
     def salvar_dados_nuvem():
-        db_conn = ligar_google_sheets()
+        db_conn = ligar_google_sheets(st.session_state["url_planilha"])
 
         total_fixos = sum(item.get("Valor (R$)", 0) for lista in st.session_state.historico_fixos.values() for item in lista)
         total_casuais = sum(item.get("Valor (R$)", 0) for lista in st.session_state.historico_casuais.values() for item in lista)

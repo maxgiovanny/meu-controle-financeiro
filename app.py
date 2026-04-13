@@ -569,8 +569,41 @@ if check_password():
         try:
             return api_sugestao_gemini(prompt)
         except Exception as e:
-            return "Outros"
+            return "Outros"      
+
+    def extrair_dados_recibo_gemini(imagem_pil):
+        if not gemini_ok or client is None:
+            return None
+            
+        categorias_disponiveis = get_categorias()
         
+        prompt = f"""
+        Você é um assistente de extração de dados. Analise a imagem deste cupom fiscal/recibo.
+        Extraia as informações e retorne EXATAMENTE no formato JSON abaixo, sem formatação markdown (```json).
+        Se a data não estiver clara, use a data de hoje. Deduz a categoria pelo nome do estabelecimento ou itens.
+        
+        {{
+            "descricao": "Nome do local ou resumo rápido",
+            "valor": 0.00,
+            "categoria": "Uma destas: {', '.join(categorias_disponiveis)}",
+            "data": "YYYY-MM-DD"
+        }}
+        """
+        try:
+            # Enviamos a imagem junto com o texto para o Gemini
+            resposta = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=[imagem_pil, prompt]
+            )
+            
+            # Limpar o texto para garantir que o Python entenda o JSON
+            texto_limpo = resposta.text.replace("```json", "").replace("```", "").strip()
+            import json
+            return json.loads(texto_limpo)
+        except Exception as e:
+            st.error(f"Erro ao extrair dados: {e}")
+            return None
+    
     # --- INICIALIZAÇÃO ---
     if "dados_carregados" not in st.session_state:
         with st.spinner("Carregando dados da nuvem..."):
@@ -934,6 +967,51 @@ if check_password():
     elif sel == "Dia a Dia":
         st.subheader("🛍️ Compras Casuais")
         st.subheader(f"Total no Mês: {formatar_moeda_br(t_cas)}")
+# --- NOVO: Escâner de Recibos com IA ---
+        with st.expander("📸 Escanear Cupom Fiscal com IA", expanded=False):
+            from PIL import Image
+            
+            # Permite upload ou tirar foto direto do celular
+            imagem_up = st.file_uploader("Tire uma foto ou envie o cupom", type=["png", "jpg", "jpeg"])
+            
+            if imagem_up is not None:
+                img = Image.open(imagem_up)
+                st.image(img, width=300, caption="Recibo carregado")
+                
+                if st.button("🪄 Extrair Dados com IA", use_container_width=True):
+                    with st.spinner("Lendo cupom..."):
+                        dados = extrair_dados_recibo_gemini(img)
+                        
+                        if dados:
+                            st.session_state["recibo_pendente"] = dados
+                            st.success("Dados extraídos com sucesso!")
+                            
+            # Se a IA extraiu os dados, mostra para o usuário confirmar
+            if "recibo_pendente" in st.session_state:
+                dados = st.session_state["recibo_pendente"]
+                st.info("Verifique os dados extraídos:")
+                
+                c1, c2 = st.columns(2)
+                r_data = pd.to_datetime(dados.get('data', datetime.now().date())).date()
+                r_desc = c1.text_input("Descrição (IA)", dados.get('descricao', ''))
+                r_cat = c2.selectbox("Categoria (IA)", get_categorias(), index=get_categorias().index(dados.get('categoria')) if dados.get('categoria') in get_categorias() else 0)
+                r_val = st.number_input("Valor Extraído (R$)", value=float(dados.get('valor', 0.0)), format="%.2f")
+                
+                col_conf, col_canc = st.columns(2)
+                with col_conf:
+                    if st.button("✅ Confirmar e Salvar"):
+                        nova_linha = pd.DataFrame([{"Data": r_data, "Categoria": r_cat, "Descrição": r_desc, "Valor (R$)": r_val}])
+                        st.session_state.gastos_casuais = pd.concat([st.session_state.gastos_casuais, nova_linha], ignore_index=True)
+                        salvar_dados_nuvem()
+                        del st.session_state["recibo_pendente"]
+                        st.success("Cupom registrado!")
+                        st.rerun()
+                with col_canc:
+                    if st.button("❌ Cancelar"):
+                        del st.session_state["recibo_pendente"]
+                        st.rerun()
+        st.divider()
+        # ... (aqui continua o seu código atual com o "Lançamento Rápido do Dia a Dia") ...
 
         with st.expander("➕ Lançamento Rápido do Dia a Dia", expanded=False):
             with st.form("form_novo_casual"):

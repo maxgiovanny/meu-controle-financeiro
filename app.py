@@ -967,6 +967,31 @@ if check_password():
     elif sel == "Dia a Dia":
         st.subheader("🛍️ Compras Casuais")
         st.subheader(f"Total no Mês: {formatar_moeda_br(t_cas)}")
+
+        with st.expander("➕ Lançamento Rápido do Dia a Dia", expanded=False):
+            with st.form("form_novo_casual"):
+                c1, c2 = st.columns(2)
+                n_data = c1.date_input("Data do Registo", datetime.now().date())
+                n_desc = st.text_input("Descrição da Compra")
+                n_cat = c2.selectbox("Categoria", get_categorias())
+                n_val = st.number_input("Valor (R$)", min_value=0.0, format="%.2f")
+                if st.form_submit_button("Guardar Registo"):
+                    if n_desc:
+                        nova_linha = pd.DataFrame([{"Data": n_data, "Categoria": n_cat, "Descrição": n_desc, "Valor (R$)": n_val}])
+                        st.session_state.gastos_casuais = pd.concat([st.session_state.gastos_casuais, nova_linha], ignore_index=True)
+                        salvar_dados_nuvem()
+                        st.success("Compra registada com sucesso!")
+                        st.rerun()
+                    else: st.warning("A descrição não pode estar vazia.")
+            
+            st.divider()
+            desc_temp = st.text_input("Não sabe a categoria? Digite a descrição aqui para sugestão:", key="desc_sugestao_casual")
+            if st.button("✨ Sugerir categoria via IA", key="sugerir_casual"):
+                if desc_temp and gemini_ok:
+                    with st.spinner("IA pensando..."):
+                        sugestao = sugerir_categoria_gemini(desc_temp)
+                        st.info(f"A categoria sugerida é: **{sugestao}**")
+                        
 # --- NOVO: Escâner de Recibos com IA ---
         with st.expander("📸 Escanear Cupom Fiscal com IA", expanded=False):
             from PIL import Image
@@ -1011,31 +1036,6 @@ if check_password():
                         del st.session_state["recibo_pendente"]
                         st.rerun()
         st.divider()
-        # ... (aqui continua o seu código atual com o "Lançamento Rápido do Dia a Dia") ...
-
-        with st.expander("➕ Lançamento Rápido do Dia a Dia", expanded=False):
-            with st.form("form_novo_casual"):
-                c1, c2 = st.columns(2)
-                n_data = c1.date_input("Data do Registo", datetime.now().date())
-                n_desc = st.text_input("Descrição da Compra")
-                n_cat = c2.selectbox("Categoria", get_categorias())
-                n_val = st.number_input("Valor (R$)", min_value=0.0, format="%.2f")
-                if st.form_submit_button("Guardar Registo"):
-                    if n_desc:
-                        nova_linha = pd.DataFrame([{"Data": n_data, "Categoria": n_cat, "Descrição": n_desc, "Valor (R$)": n_val}])
-                        st.session_state.gastos_casuais = pd.concat([st.session_state.gastos_casuais, nova_linha], ignore_index=True)
-                        salvar_dados_nuvem()
-                        st.success("Compra registada com sucesso!")
-                        st.rerun()
-                    else: st.warning("A descrição não pode estar vazia.")
-            
-            st.divider()
-            desc_temp = st.text_input("Não sabe a categoria? Digite a descrição aqui para sugestão:", key="desc_sugestao_casual")
-            if st.button("✨ Sugerir categoria via IA", key="sugerir_casual"):
-                if desc_temp and gemini_ok:
-                    with st.spinner("IA pensando..."):
-                        sugestao = sugerir_categoria_gemini(desc_temp)
-                        st.info(f"A categoria sugerida é: **{sugestao}**")
 
         ec = st.data_editor(
             st.session_state.gastos_casuais,

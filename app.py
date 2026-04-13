@@ -128,7 +128,7 @@ if check_password():
             return str(val).strip().lower() in ['true', '1', 't', 'y', 'yes']
         except: return False
 
-# --- CONEXÃO GOOGLE SHEETS ---
+    # --- CONEXÃO GOOGLE SHEETS ---
     @st.cache_resource
     def ligar_google_sheets(url_da_planilha):
         creds_dict = json.loads(st.secrets["gcp_service_account"])
@@ -136,7 +136,7 @@ if check_password():
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         return gspread.authorize(creds).open_by_url(url_da_planilha)
         
-    # --- LEITURA DOS DADOS (COM CONVERSÃO DE MOEDA) ---
+    # --- LEITURA DOS DADOS ---
     def carregar_dados_nuvem_raw():
         db_conn = ligar_google_sheets(st.session_state["url_planilha"])
         try:
@@ -149,6 +149,7 @@ if check_password():
             return {
                 "historico_casuais": {},
                 "historico_fixos": {},
+                "historico_investimentos": [],
                 "guias_extras": [],
                 "categorias_personalizadas": [],
                 "categorias_padrao": CATEGORIAS_PADRAO_BASE.copy(),
@@ -160,6 +161,13 @@ if check_password():
         all_fixos = ws_fixos.get_all_values()
         all_guias = ws_guias.get_all_values()
         config_val = ws_config.acell('A1').value
+
+        # Tenta ler a aba Investimentos (se não existir, cria uma lista vazia)
+        try:
+            ws_investimentos = db_conn.worksheet("Investimentos")
+            all_invest = ws_investimentos.get_all_values()
+        except:
+            all_invest = []
 
         # Processa Casuais
         hist_casuais = {}
@@ -225,6 +233,20 @@ if check_password():
                     "Qtd Parcelas": qtd
                 })
 
+        # Processa Investimentos
+        hist_invest = []
+        if len(all_invest) > 1:
+            for row in all_invest[1:]:
+                if len(row) < 6: continue
+                hist_invest.append({
+                    "Data": safe_str(row[0]),
+                    "Ativo": safe_str(row[1]),
+                    "Classe": safe_str(row[2]),
+                    "Tipo": safe_str(row[3]),
+                    "Valor (R$)": moeda_para_float(row[4]),
+                    "Descrição": safe_str(row[5])
+                })
+
         # Configurações
         try:
             config = json.loads(config_val) if config_val else {}
@@ -234,6 +256,7 @@ if check_password():
         result = {
             "historico_casuais": hist_casuais,
             "historico_fixos": hist_fixos,
+            "historico_investimentos": hist_invest,
             "guias_extras": config.get("guias_extras", []),
             "categorias_personalizadas": config.get("categorias_personalizadas", []),
             "categorias_padrao": config.get("categorias_padrao", CATEGORIAS_PADRAO_BASE.copy()),
@@ -268,7 +291,7 @@ if check_password():
             if f"dados_{g}" in st.session_state:
                 st.session_state[f"dados_raw_{g}"] = st.session_state[f"dados_{g}"].to_dict("records")
 
-        # Preparar dados planos
+        # Preparar dados planos (flats)
         flat_casuais = [["Mes_Ano", "Data", "Categoria", "Descrição", "Valor"]]
         for ma, itens in st.session_state.historico_casuais.items():
             for item in itens:
@@ -293,6 +316,12 @@ if check_password():
                     safe_int(item.get("Qtd Parcelas"), 1)
                 ])
 
+        flat_invest = [["Data", "Ativo", "Classe", "Tipo", "Valor", "Descrição"]]
+        if "dados_investimentos" in st.session_state:
+            for _, item in st.session_state.dados_investimentos.iterrows():
+                d_str = item["Data"].strftime("%Y-%m-%d") if hasattr(item.get("Data"), 'strftime') else safe_str(item.get("Data"))
+                flat_invest.append([d_str, safe_str(item.get("Ativo","")), safe_str(item.get("Classe","")), safe_str(item.get("Tipo","")), safe_float(item.get("Valor (R$)"), 0.0), safe_str(item.get("Descrição",""))])
+
         renda_limpa = {}
         for ma, itens in st.session_state.renda_por_mes.items():
             renda_limpa[safe_str(ma)] = [{"Fonte": safe_str(i.get("Fonte","")), "Valor (R$)": safe_float(i.get("Valor (R$)",0))} for i in itens]
@@ -305,6 +334,7 @@ if check_password():
             "metas_orcamento": {safe_str(k): safe_float(v) for k, v in st.session_state.metas_orcamento.items()}
         }
 
+        # Atualiza planilhas
         ws_casuais = db_conn.worksheet("Casuais")
         ws_casuais.clear()
         ws_casuais.update(values=flat_casuais, range_name='A1')
@@ -323,6 +353,13 @@ if check_password():
         ws_config = db_conn.worksheet("Configuracoes")
         ws_config.clear()
         ws_config.update(values=[[json.dumps(config_json, default=str)]], range_name='A1')
+
+        try:
+            ws_invest = db_conn.worksheet("Investimentos")
+            ws_invest.clear()
+            ws_invest.update(values=flat_invest, range_name='A1')
+        except:
+            pass # Ignora se a aba Investimentos não estiver criada ainda
 
         st.toast("💾 Dados salvos na nuvem!", icon="✅")
 
@@ -368,7 +405,7 @@ if check_password():
         else:
             st.session_state.renda_detalhada = pd.DataFrame([{"Fonte":"Salário","Valor (R$)":0.0}])
 
-    def recalcular_media_casuais(anos_meses):
+    def decalcular_media_casuais(anos_meses):
         valores = []
         for ano, mes in anos_meses:
             chave = f"{mes}_{ano}"
@@ -502,23 +539,23 @@ if check_password():
         os.remove(temp_path)
         return pdf_data
 
-# --- FUNÇÕES DE IA (GEMINI) ---
+    # --- FUNÇÕES DE IA (GEMINI) ---
     
     # 1. Funções internas (O Cache só guarda se der certo)
     @st.cache_data(ttl=3600)
     def api_analise_gemini(prompt_text):
         try:
-            # Tenta usar o modelo 2.5 Flash (que está no seu painel)
+            # Tenta usar o modelo 2.5 Flash
             resposta = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=prompt_text
             )
             return resposta.text
         except Exception as e:
-            if "404" in str(e):
-                # Se o 2.5 der 404, cai automaticamente para o 2.0 Flash
+            if "404" in str(e) or "503" in str(e):
+                # Se o 2.5 der 404 ou 503, cai automaticamente para o 1.5 Flash
                 resposta = client.models.generate_content(
-                    model="gemini-2.0-flash",
+                    model="gemini-1.5-flash",
                     contents=prompt_text
                 )
                 return resposta.text
@@ -533,9 +570,9 @@ if check_password():
             )
             return resposta.text.strip()
         except Exception as e:
-            if "404" in str(e):
+            if "404" in str(e) or "503" in str(e):
                 resposta = client.models.generate_content(
-                    model="gemini-2.0-flash",
+                    model="gemini-1.5-flash",
                     contents=prompt_text
                 )
                 return resposta.text.strip()
@@ -562,6 +599,8 @@ if check_password():
         except Exception as e:
             if "429" in str(e) or "quota" in str(e).lower():
                 return "⚠️ O limite gratuito de IA foi atingido. Aguarde cerca de 1 minuto e tente novamente."
+            if "503" in str(e):
+                return "⏳ A IA do Google está com alta demanda neste exato momento. Aguarde alguns minutos e tente de novo."
             return f"Erro na IA: {e}"
 
     def sugerir_categoria_gemini(descricao):
@@ -638,6 +677,15 @@ if check_password():
             if st.session_state[f"dados_{g}"].empty:
                 st.session_state[f"dados_{g}"] = pd.DataFrame(columns=["Descrição","Valor Parcela (R$)","Mês Início (1-12)","Ano Início","Qtd Parcelas","Categoria"])
 
+        # Inicializa a memória dos investimentos
+        dados_inv = dados_raw.get("historico_investimentos", [])
+        if dados_inv:
+            df_inv = pd.DataFrame(dados_inv)
+            df_inv["Data"] = pd.to_datetime(df_inv["Data"], errors='coerce').dt.date
+            st.session_state.dados_investimentos = df_inv
+        else:
+            st.session_state.dados_investimentos = pd.DataFrame(columns=["Data", "Ativo", "Classe", "Tipo", "Valor (R$)", "Descrição"])
+
         carregar_dados_sessao()
         st.session_state.dados_carregados = True
 
@@ -649,10 +697,11 @@ if check_password():
 
     # --- SIDEBAR (configurações, PDF, categorias, guias) ---
     with st.sidebar:
+        st.header(f"👤 Olá, {str(st.session_state.get('usuario_logado', '')).title()}")
         st.header("⚙️ Configurações")
         if st.button("🔄 Recarregar Nuvem"):
             for key in ["dados_carregados", "historico_fixos", "historico_casuais", "guias_extras", 
-                        "categorias_personalizadas", "categorias_padrao", "renda_por_mes", "metas_orcamento"]:
+                        "categorias_personalizadas", "categorias_padrao", "renda_por_mes", "metas_orcamento", "dados_investimentos"]:
                 if key in st.session_state:
                     del st.session_state[key]
             st.rerun()
@@ -847,7 +896,7 @@ if check_password():
 
     st.title(f"💰 {st.session_state.mes_atual} / {st.session_state.ano_atual}")
 
-    opcoes = ["Resumo Geral", "Renda", "Gastos Fixos", "Dia a Dia", "Resumo das Guias", "Metas de Orçamento", "Pesquisa Global"] + st.session_state.guias_extras
+    opcoes = ["Resumo Geral", "Renda", "Gastos Fixos", "Dia a Dia", "Investimentos", "Resumo das Guias", "Metas de Orçamento", "Pesquisa Global"] + st.session_state.guias_extras
     sel = st.selectbox("Navegação do App:", opcoes)
     st.divider()
 
@@ -1001,7 +1050,7 @@ if check_password():
                         sugestao = sugerir_categoria_gemini(desc_temp)
                         st.info(f"A categoria sugerida é: **{sugestao}**")
                         
-# --- NOVO: Escâner de Recibos com IA ---
+        # --- NOVO: Escâner de Recibos com IA ---
         with st.expander("📸 Escanear Cupom Fiscal com IA", expanded=False):
             from PIL import Image
             
@@ -1060,6 +1109,98 @@ if check_password():
         if not ec.equals(st.session_state.gastos_casuais):
             st.session_state.gastos_casuais = ec
             salvar_dados_nuvem()
+
+    elif sel == "Investimentos":
+        st.subheader("📈 Carteira de Investimentos")
+        
+        # Constantes do Módulo
+        CLASSES_INV = ["Renda Fixa (CDB/Tesouro)", "Ações (Bolsa)", "Fundos Imobiliários (FIIs)", "Previdência Privada", "Criptomoedas", "Outros"]
+        TIPOS_MOV = ["Aporte", "Rendimento", "Resgate"]
+        
+        df_inv = st.session_state.dados_investimentos
+        
+        # 1. CÁLCULO DO PATRIMÔNIO
+        patrimonio_total = 0.0
+        patrimonio_por_classe = {c: 0.0 for c in CLASSES_INV}
+        
+        if not df_inv.empty:
+            for _, row in df_inv.iterrows():
+                val = safe_float(row.get("Valor (R$)", 0.0))
+                tipo = row.get("Tipo", "")
+                classe = row.get("Classe", "Outros")
+                if classe not in patrimonio_por_classe: patrimonio_por_classe[classe] = 0.0
+                
+                # Aportes e Rendimentos somam. Resgates subtraem.
+                if tipo in ["Aporte", "Rendimento"]:
+                    patrimonio_total += val
+                    patrimonio_por_classe[classe] += val
+                elif tipo == "Resgate":
+                    patrimonio_total -= val
+                    patrimonio_por_classe[classe] -= val
+        
+        # 2. DASHBOARD DE TOPO
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            st.metric("Patrimônio Acumulado", formatar_moeda_br(patrimonio_total))
+            st.caption("Soma de todos os aportes e rendimentos, descontando resgates.")
+        with c2:
+            if patrimonio_total > 0:
+                # Cria um dataframe apenas com classes que têm saldo positivo para o gráfico
+                df_grafico = pd.DataFrame([{"Classe": k, "Saldo": v} for k, v in patrimonio_por_classe.items() if v > 0])
+                if not df_grafico.empty:
+                    fig_inv = px.pie(df_grafico, values='Saldo', names='Classe', hole=0.5, title="Alocação da Carteira")
+                    fig_inv.update_layout(margin=dict(t=30,b=0,l=0,r=0), height=200)
+                    st.plotly_chart(fig_inv, use_container_width=True)
+            else:
+                st.info("Gráfico indisponível. Cadastre seus primeiros aportes.")
+
+        st.divider()
+
+        # 3. LANÇAMENTO DE MOVIMENTAÇÃO
+        with st.expander("➕ Nova Movimentação (Aporte, Resgate ou Rendimento)", expanded=False):
+            with st.form("form_novo_investimento"):
+                col1, col2, col3 = st.columns(3)
+                n_data = col1.date_input("Data", datetime.now().date())
+                n_tipo = col2.selectbox("Tipo de Movimento", TIPOS_MOV)
+                n_classe = col3.selectbox("Classe do Ativo", CLASSES_INV)
+                
+                col4, col5, col6 = st.columns([2, 1, 2])
+                n_ativo = col4.text_input("Nome do Ativo (Ex: CDB Itaú, MXRF11)")
+                n_val = col5.number_input("Valor (R$)", min_value=0.0, format="%.2f")
+                n_desc = col6.text_input("Observação (Opcional)")
+                
+                if st.form_submit_button("Registrar Movimentação"):
+                    if n_ativo and n_val > 0:
+                        nova_linha = pd.DataFrame([{
+                            "Data": n_data, "Ativo": n_ativo, "Classe": n_classe, 
+                            "Tipo": n_tipo, "Valor (R$)": n_val, "Descrição": n_desc
+                        }])
+                        st.session_state.dados_investimentos = pd.concat([st.session_state.dados_investimentos, nova_linha], ignore_index=True)
+                        salvar_dados_nuvem()
+                        st.success(f"{n_tipo} registrado com sucesso!")
+                        st.rerun()
+                    else:
+                        st.warning("Preencha o Nome do Ativo e insira um valor maior que zero.")
+
+        # 4. TABELA DE DADOS
+        st.write("**Histórico de Movimentações:**")
+        ed_inv = st.data_editor(
+            st.session_state.dados_investimentos,
+            num_rows="dynamic",
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Data": st.column_config.DateColumn(format="DD/MM/YYYY"),
+                "Ativo": st.column_config.TextColumn(required=True),
+                "Classe": st.column_config.SelectboxColumn(options=CLASSES_INV, required=True),
+                "Tipo": st.column_config.SelectboxColumn(options=TIPOS_MOV, required=True),
+                "Valor (R$)": st.column_config.NumberColumn(format="R$ %.2f", min_value=0, required=True)
+            }
+        )
+        if not ed_inv.equals(st.session_state.dados_investimentos):
+            st.session_state.dados_investimentos = ed_inv
+            salvar_dados_nuvem()
+            st.rerun()
 
     elif sel == "Metas de Orçamento":
         st.subheader("🎯 Metas e Limites Mensais")
@@ -1152,6 +1293,21 @@ if check_password():
                     for _, row in df_g.iterrows():
                         if termo in str(row.get('Descrição','')).lower() or termo in str(row.get('Categoria','')).lower():
                             resultados.append({"Referência": f"Fatura: {g}", "Tipo": "Parcelamento", "Data": f"Mês {row.get('Mês Início (1-12)')}/{row.get('Ano Início')}", "Categoria": row.get('Categoria',''), "Descrição": row.get('Descrição',''), "Valor": formatar_moeda_br(row.get('Valor Parcela (R$)',0))})
+            
+            # --- BUSCA NOS INVESTIMENTOS ---
+            if "dados_investimentos" in st.session_state and not st.session_state.dados_investimentos.empty:
+                for _, row in st.session_state.dados_investimentos.iterrows():
+                    if termo in str(row.get('Ativo','')).lower() or termo in str(row.get('Classe','')).lower() or termo in str(row.get('Descrição','')).lower():
+                        d_str = row['Data'].strftime("%d/%m/%Y") if hasattr(row.get('Data'),'strftime') else str(row.get('Data'))
+                        resultados.append({
+                            "Referência": "Carteira", 
+                            "Tipo": f"Investimento ({row.get('Tipo','')})", 
+                            "Data": d_str, 
+                            "Categoria": row.get('Classe',''), 
+                            "Descrição": f"{row.get('Ativo','')} - {row.get('Descrição','')}", 
+                            "Valor": formatar_moeda_br(row.get('Valor (R$)',0))
+                        })
+
             if resultados:
                 df_res = pd.DataFrame(resultados)
                 st.success(f"Foram encontrados {len(df_res)} registos em toda a sua conta!")

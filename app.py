@@ -457,7 +457,7 @@ if check_password():
             st.session_state.renda_detalhada = pd.DataFrame([{"Fonte":"Salário","Valor (R$)":0.0}])
 
     @st.cache_data(ttl=3600)
-def calc_parc_com_categoria_cached(_df_json, m, a):
+    def calc_parc_com_categoria_cached(_df_json, m, a):
     df = pd.read_json(io.StringIO(_df_json)) if _df_json else pd.DataFrame()
     parcelas = []
     if df is None or df.empty:
@@ -622,7 +622,7 @@ def calc_parc_com_categoria_cached(_df_json, m, a):
         Despesas: R$ {despesa_total:.2f}
         Sobra: R$ {sobra:.2f}
         Top categorias: {texto_categorias}
-        Forneça um feedback curto (max 80 palavras) e uma dica prática direta.
+        Forneça um feedback (max 150 palavras) e uma dica prática direta.
         """
         try:
             return api_analise_gemini(prompt)

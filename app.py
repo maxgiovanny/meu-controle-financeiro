@@ -11,6 +11,7 @@ from fpdf import FPDF
 import unicodedata
 import tempfile
 import os
+import io
 
 # --- TENTAR IMPORTAR GEMINI (Nova SDK) ---
 try:
@@ -456,28 +457,28 @@ if check_password():
             st.session_state.renda_detalhada = pd.DataFrame([{"Fonte":"Salário","Valor (R$)":0.0}])
 
     @st.cache_data(ttl=3600)
-    def calc_parc_com_categoria_cached(_df_json, m, a):
-        df = pd.read_json(_df_json) if _df_json else pd.DataFrame()
-        parcelas = []
-        if df is None or df.empty:
-            return pd.DataFrame(columns=["Descrição","Categoria","Valor (R$)"]).to_dict('records'), 0.0, {}
-        df_valid = df.dropna(subset=["Descrição","Valor Parcela (R$)"])
-        for _, r in df_valid[df_valid["Descrição"]!=""].iterrows():
-            try:
-                m_i = safe_int(r["Mês Início (1-12)"])
-                a_i = safe_int(r["Ano Início"])
-                qtd = safe_int(r["Qtd Parcelas"])
-                v = safe_float(r["Valor Parcela (R$)"])
-                alvo = a*12 + m
-                ini = a_i*12 + m_i
-                if ini <= alvo <= (ini+qtd-1):
-                    categoria = r.get("Categoria","Outros")
-                    parcelas.append({"Descrição":r["Descrição"],"Categoria":categoria,"Valor (R$)":v})
-            except: continue
-        df_parc = pd.DataFrame(parcelas)
-        total = df_parc["Valor (R$)"].sum() if not df_parc.empty else 0.0
-        soma_cat = df_parc.groupby("Categoria")["Valor (R$)"].sum().to_dict() if not df_parc.empty else {}
-        return df_parc.to_dict('records'), total, soma_cat
+def calc_parc_com_categoria_cached(_df_json, m, a):
+    df = pd.read_json(io.StringIO(_df_json)) if _df_json else pd.DataFrame()
+    parcelas = []
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["Descrição","Categoria","Valor (R$)"]).to_dict('records'), 0.0, {}
+    df_valid = df.dropna(subset=["Descrição","Valor Parcela (R$)"])
+    for _, r in df_valid[df_valid["Descrição"]!=""].iterrows():
+        try:
+            m_i = safe_int(r["Mês Início (1-12)"])
+            a_i = safe_int(r["Ano Início"])
+            qtd = safe_int(r["Qtd Parcelas"])
+            v = safe_float(r["Valor Parcela (R$)"])
+            alvo = a*12 + m
+            ini = a_i*12 + m_i
+            if ini <= alvo <= (ini+qtd-1):
+                categoria = r.get("Categoria","Outros")
+                parcelas.append({"Descrição":r["Descrição"],"Categoria":categoria,"Valor (R$)":v})
+        except: continue
+    df_parc = pd.DataFrame(parcelas)
+    total = df_parc["Valor (R$)"].sum() if not df_parc.empty else 0.0
+    soma_cat = df_parc.groupby("Categoria")["Valor (R$)"].sum().to_dict() if not df_parc.empty else {}
+    return df_parc.to_dict('records'), total, soma_cat
 
     def calc_parc_com_categoria(df, m, a):
         if df is None or df.empty:

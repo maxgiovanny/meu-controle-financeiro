@@ -367,7 +367,7 @@ if check_password():
             "categorias_padrao": [safe_str(x) for x in st.session_state.categorias_padrao],
             "renda_por_mes": renda_limpa,
             "metas_orcamento": {safe_str(k): safe_float(v) for k, v in st.session_state.metas_orcamento.items()},
-            "pagamento_guias": {safe_str(k): bool(v) for k, v in st.session_state.pagamento_guias.items()}
+            "pagamento_guias": {str(k): {str(g): bool(v) for g, v in meses_guias.items()} for k, meses_guias in st.session_state.pagamento_guias.items()}
         }
 
         ws_casuais = db_conn.worksheet("Casuais")
@@ -672,8 +672,10 @@ if check_password():
                 st.session_state[f"dados_{g}"] = df
             else:
                 st.session_state[f"dados_{g}"] = pd.DataFrame(columns=colunas_guia)
-            if g not in st.session_state.pagamento_guias:
-                st.session_state.pagamento_guias[g] = False
+                
+        # Garante que o formato antigo global seja resetado para o formato mensal
+        if st.session_state.pagamento_guias and not isinstance(list(st.session_state.pagamento_guias.values())[0], dict):
+            st.session_state.pagamento_guias = {}
 
         dados_inv = dados_raw.get("historico_investimentos", [])
         if dados_inv:
@@ -866,14 +868,17 @@ if check_password():
                             st.session_state.guias_extras[idx] = novo_nome
                             st.session_state[f"dados_{novo_nome}"] = st.session_state[f"dados_{g_ativa}"]
                             del st.session_state[f"dados_{g_ativa}"]
-                            st.session_state.pagamento_guias[novo_nome] = st.session_state.pagamento_guias.pop(g_ativa, False)
+                            for mes_ano in st.session_state.pagamento_guias:
+                                if g_ativa in st.session_state.pagamento_guias[mes_ano]:
+                                    st.session_state.pagamento_guias[mes_ano][novo_nome] = st.session_state.pagamento_guias[mes_ano].pop(g_ativa)
                             salvar_dados_nuvem()
                             st.rerun()
                 with col2:
                     if st.button("🗑️ Apagar", key="delete_guia"):
                         st.session_state.guias_extras.remove(g_ativa)
                         if f"dados_{g_ativa}" in st.session_state: del st.session_state[f"dados_{g_ativa}"]
-                        st.session_state.pagamento_guias.pop(g_ativa, None)
+                        for mes_ano in st.session_state.pagamento_guias:
+                            st.session_state.pagamento_guias[mes_ano].pop(g_ativa, None)
                         salvar_dados_nuvem()
                         st.rerun()
 
@@ -959,7 +964,11 @@ if check_password():
             """, unsafe_allow_html=True)
         
         # Aviso de guias não marcadas como pagas (apenas lembrete)
-        guias_nao_marcadas = [g for g in st.session_state.guias_extras if not st.session_state.pagamento_guias.get(g, False)]
+        chave_atual = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
+        if chave_atual not in st.session_state.pagamento_guias:
+            st.session_state.pagamento_guias[chave_atual] = {}
+            
+        guias_nao_marcadas = [g for g in st.session_state.guias_extras if not st.session_state.pagamento_guias[chave_atual].get(g, False)]
         if guias_nao_marcadas:
             with st.expander("⚠️ Guias com pagamento pendente (lembrete)", expanded=False):
                 for guia in guias_nao_marcadas:
@@ -1340,10 +1349,14 @@ if check_password():
         else:
             guia_ativa = st.selectbox("Selecione o cartão/guia para editar:", st.session_state.guias_extras, key="guia_ativa")
             
-            pago_guia = st.session_state.pagamento_guias.get(guia_ativa, False)
+            chave_atual = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
+            if chave_atual not in st.session_state.pagamento_guias:
+                st.session_state.pagamento_guias[chave_atual] = {}
+
+            pago_guia = st.session_state.pagamento_guias[chave_atual].get(guia_ativa, False)
             novo_status = st.checkbox("✅ Marcar como paga (apenas lembrete, não afeta os cálculos)", value=pago_guia)
             if novo_status != pago_guia:
-                st.session_state.pagamento_guias[guia_ativa] = novo_status
+                st.session_state.pagamento_guias[chave_atual][guia_ativa] = novo_status
                 salvar_dados_nuvem()
                 st.rerun()
             

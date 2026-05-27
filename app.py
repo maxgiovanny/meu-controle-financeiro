@@ -611,7 +611,7 @@ if check_password():
         Despesas: R$ {despesa_total:.2f}
         Sobra: R$ {sobra:.2f}
         Top categorias: {texto_categorias}
-        Forneça um feedback curto (max 80 palavras) e uma dica prática direta.
+        Forneça um feedback (max 200 palavras) e uma dica prática.
         """
         try:
             return api_analise_gemini(prompt)

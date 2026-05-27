@@ -324,8 +324,14 @@ if check_password():
             itens = st.session_state.get(f"dados_raw_{g}", [])
             for item in itens:
                 data_compra = item.get("Data da Compra")
-                if hasattr(data_compra, 'strftime'):
+                # Tratamento robusto para evitar erros com NaT
+                if isinstance(data_compra, datetime) and not pd.isna(data_compra):
                     data_str = data_compra.strftime("%Y-%m-%d")
+                elif hasattr(data_compra, 'strftime') and not pd.isna(data_compra):
+                    try:
+                        data_str = data_compra.strftime("%Y-%m-%d")
+                    except:
+                        data_str = ""
                 else:
                     data_str = str(data_compra) if data_compra else ""
                 flat_guias.append([
@@ -654,8 +660,10 @@ if check_password():
                             df[col] = None
                         else:
                             df[col] = None
+                # Tratamento seguro da coluna de data
                 if "Data da Compra" in df.columns:
-                    df["Data da Compra"] = pd.to_datetime(df["Data da Compra"], errors='coerce').dt.date
+                    df["Data da Compra"] = pd.to_datetime(df["Data da Compra"], errors='coerce')
+                    df["Data da Compra"] = df["Data da Compra"].apply(lambda x: x.date() if isinstance(x, datetime) and not pd.isna(x) else None)
                 st.session_state[f"dados_{g}"] = df
             else:
                 st.session_state[f"dados_{g}"] = pd.DataFrame(columns=colunas_guia)
@@ -947,7 +955,6 @@ if check_password():
             </div>
             """, unsafe_allow_html=True)
         
-        # Aviso de guias não pagas
         if guias_nao_pagas:
             with st.expander("⚠️ Guias com pagamento pendente", expanded=True):
                 for guia in guias_nao_pagas:
@@ -1286,7 +1293,7 @@ if check_password():
                     for _, row in df_g.iterrows():
                         if termo in str(row.get('Descrição','')).lower() or termo in str(row.get('Categoria','')).lower():
                             data_compra = row.get('Data da Compra')
-                            data_str = data_compra.strftime("%d/%m/%Y") if hasattr(data_compra, 'strftime') else str(data_compra) if data_compra else "-"
+                            data_str = data_compra.strftime("%d/%m/%Y") if hasattr(data_compra, 'strftime') and not pd.isna(data_compra) else str(data_compra) if data_compra else "-"
                             resultados.append({"Referência": f"Guia: {g}", "Tipo": "Parcela", "Data": data_str, "Categoria": row.get('Categoria',''), "Descrição": row.get('Descrição',''), "Valor": formatar_moeda_br(row.get('Valor Parcela (R$)',0))})
             if "dados_investimentos" in st.session_state and not st.session_state.dados_investimentos.empty:
                 for _, row in st.session_state.dados_investimentos.iterrows():
@@ -1340,6 +1347,11 @@ if check_password():
             df_guia = st.session_state[f"dados_{guia_ativa}"]
             if "Data da Compra" not in df_guia.columns:
                 df_guia["Data da Compra"] = None
+            else:
+                # Garante que a coluna de data esteja como datetime.date (não NaT)
+                df_guia["Data da Compra"] = pd.to_datetime(df_guia["Data da Compra"], errors='coerce').apply(
+                    lambda x: x.date() if isinstance(x, datetime) and not pd.isna(x) else None
+                )
             
             if not novo_status:
                 df_parc, total_parc, _ = calc_parc_com_categoria(df_guia, mes_n, ano_r)

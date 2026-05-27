@@ -456,8 +456,8 @@ if check_password():
         else:
             st.session_state.renda_detalhada = pd.DataFrame([{"Fonte":"Salário","Valor (R$)":0.0}])
 
-    @st.cache_data(ttl=3600)
-    def calc_parc_com_categoria_cached(_df_json, m, a):
+@st.cache_data(ttl=3600)
+def calc_parc_com_categoria_cached(_df_json, m, a):
     df = pd.read_json(io.StringIO(_df_json)) if _df_json else pd.DataFrame()
     parcelas = []
     if df is None or df.empty:

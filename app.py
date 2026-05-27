@@ -11,6 +11,7 @@ from fpdf import FPDF
 import unicodedata
 import tempfile
 import os
+import time
 
 # --- TENTAR IMPORTAR GEMINI (Nova SDK) ---
 try:
@@ -370,33 +371,46 @@ if check_password():
             "pagamento_guias": {str(k): {str(g): bool(v) for g, v in meses_guias.items()} for k, meses_guias in st.session_state.pagamento_guias.items()}
         }
 
-        ws_casuais = db_conn.worksheet("Casuais")
-        ws_casuais.clear()
-        ws_casuais.update(values=flat_casuais, range_name='A1')
+        max_tentativas = 3
+        for tentativa in range(max_tentativas):
+            try:
+                ws_casuais = db_conn.worksheet("Casuais")
+                ws_casuais.clear()
+                ws_casuais.update(values=flat_casuais, range_name='A1')
 
-        ws_fixos = db_conn.worksheet("Fixos")
-        ws_fixos.clear()
-        ws_fixos.update(values=flat_fixos, range_name='A1')
+                ws_fixos = db_conn.worksheet("Fixos")
+                ws_fixos.clear()
+                ws_fixos.update(values=flat_fixos, range_name='A1')
 
-        ws_guias = db_conn.worksheet("Guias")
-        ws_guias.clear()
-        if len(flat_guias) > 1:
-            ws_guias.update(values=flat_guias, range_name='A1')
-        else:
-            ws_guias.update(values=[flat_guias[0]], range_name='A1')
+                ws_guias = db_conn.worksheet("Guias")
+                ws_guias.clear()
+                if len(flat_guias) > 1:
+                    ws_guias.update(values=flat_guias, range_name='A1')
+                else:
+                    ws_guias.update(values=[flat_guias[0]], range_name='A1')
 
-        ws_config = db_conn.worksheet("Configuracoes")
-        ws_config.clear()
-        ws_config.update(values=[[json.dumps(config_json, default=str)]], range_name='A1')
+                ws_config = db_conn.worksheet("Configuracoes")
+                ws_config.clear()
+                ws_config.update(values=[[json.dumps(config_json, default=str)]], range_name='A1')
 
-        try:
-            ws_invest = db_conn.worksheet("Investimentos")
-            ws_invest.clear()
-            ws_invest.update(values=flat_invest, range_name='A1')
-        except:
-            pass 
+                try:
+                    ws_invest = db_conn.worksheet("Investimentos")
+                    ws_invest.clear()
+                    ws_invest.update(values=flat_invest, range_name='A1')
+                except:
+                    pass 
 
-        st.toast("💾 Dados salvos na nuvem!", icon="✅")
+                st.toast("💾 Dados salvos na nuvem!", icon="✅")
+                break # Se salvou tudo sem erro, sai do loop de tentativas
+
+            except gspread.exceptions.APIError as e:
+                if tentativa < max_tentativas - 1:
+                    # Se deu erro de limite de API, espera alguns segundos e tenta de novo
+                    time.sleep(2 * (tentativa + 1)) 
+                else:
+                    # Se falhou as 3 vezes, avisa o usuário sem "quebrar" a tela vermelha
+                    st.error("⚠️ O Google limitou o salvamento por causa de muitas edições rápidas. Aguarde 1 minuto e tente alterar novamente.")
+                    break
 
     # --- DEMAIS FUNÇÕES AUXILIARES ---
     def obter_mes_anterior(mes_nome, ano_atual):

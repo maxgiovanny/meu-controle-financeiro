@@ -205,7 +205,6 @@ if check_password():
         dict_guias = {}
         if len(all_guias) > 1:
             for row in all_guias[1:]:
-                # Lê no mínimo 7 colunas (formato mais antigo)
                 if len(row) < 7: continue
                 guia = safe_str(row[0])
                 if not guia: continue
@@ -213,23 +212,18 @@ if check_password():
                 categoria = safe_str(row[2])
                 valor_parcela = moeda_para_float(row[3])
                 
-                # Detecta automaticamente o formato baseado no número de colunas
                 num_cols = len(row)
                 if num_cols >= 9:
-                    # Formato de 9 colunas: Guia, Desc, Cat, Valor, Data Compra, Mês Ini, Ano Ini, Qtd, Pago
                     data_compra_str = safe_str(row[4])
                     mes_ini = safe_int(row[5], 1)
                     ano_ini = safe_int(row[6], 2026)
                     qtd = safe_int(row[7], 1)
-                    # pago era row[8] – ignoramos
                 elif num_cols >= 8:
-                    # Formato de 8 colunas (atual): Guia, Desc, Cat, Valor, Data Compra, Mês Ini, Ano Ini, Qtd
                     data_compra_str = safe_str(row[4])
                     mes_ini = safe_int(row[5], 1)
                     ano_ini = safe_int(row[6], 2026)
                     qtd = safe_int(row[7], 1)
                 else:
-                    # Formato de 7 colunas (antigo, sem Data Compra): Guia, Desc, Cat, Valor, Mês Ini, Ano Ini, Qtd
                     data_compra_str = ""
                     mes_ini = safe_int(row[4], 1)
                     ano_ini = safe_int(row[5], 2026)
@@ -324,7 +318,6 @@ if check_password():
             itens = st.session_state.get(f"dados_raw_{g}", [])
             for item in itens:
                 data_compra = item.get("Data da Compra")
-                # Tratamento robusto para evitar erros com NaT
                 if isinstance(data_compra, datetime) and not pd.isna(data_compra):
                     data_str = data_compra.strftime("%Y-%m-%d")
                 elif hasattr(data_compra, 'strftime') and not pd.isna(data_compra):
@@ -660,7 +653,6 @@ if check_password():
                             df[col] = None
                         else:
                             df[col] = None
-                # Tratamento seguro da coluna de data
                 if "Data da Compra" in df.columns:
                     df["Data da Compra"] = pd.to_datetime(df["Data da Compra"], errors='coerce')
                     df["Data da Compra"] = df["Data da Compra"].apply(lambda x: x.date() if isinstance(x, datetime) and not pd.isna(x) else None)
@@ -955,6 +947,7 @@ if check_password():
             </div>
             """, unsafe_allow_html=True)
         
+        # Aviso de guias não pagas
         if guias_nao_pagas:
             with st.expander("⚠️ Guias com pagamento pendente", expanded=True):
                 for guia in guias_nao_pagas:
@@ -1348,21 +1341,26 @@ if check_password():
             if "Data da Compra" not in df_guia.columns:
                 df_guia["Data da Compra"] = None
             else:
-                # Garante que a coluna de data esteja como datetime.date (não NaT)
                 df_guia["Data da Compra"] = pd.to_datetime(df_guia["Data da Compra"], errors='coerce').apply(
                     lambda x: x.date() if isinstance(x, datetime) and not pd.isna(x) else None
                 )
             
-            if not novo_status:
-                df_parc, total_parc, _ = calc_parc_com_categoria(df_guia, mes_n, ano_r)
-                st.markdown(f"**Impacto na fatura deste mês:** {formatar_moeda_br(total_parc)}")
-                if not df_parc.empty:
-                    with st.expander("🔍 Ver parcelas deste mês"):
-                        df_parc_format = df_parc.copy()
-                        df_parc_format['Valor (R$)'] = df_parc_format['Valor (R$)'].apply(formatar_moeda_br)
-                        st.dataframe(df_parc_format, use_container_width=True, hide_index=True)
+            # Sempre calcular e mostrar as parcelas, independentemente do status de pagamento
+            df_parc, total_parc, _ = calc_parc_com_categoria(df_guia, mes_n, ano_r)
+            
+            if novo_status:
+                st.info("✅ Guia marcada como paga. As parcelas abaixo **não estão sendo somadas aos totais** do mês.")
             else:
-                st.info("Guia marcada como paga – nenhum valor considerado.")
+                st.caption("Os valores abaixo são considerados nos totais do mês.")
+                
+            st.markdown(f"**Impacto na fatura deste mês:** {formatar_moeda_br(total_parc)}")
+            if not df_parc.empty:
+                with st.expander("🔍 Ver parcelas deste mês"):
+                    df_parc_format = df_parc.copy()
+                    df_parc_format['Valor (R$)'] = df_parc_format['Valor (R$)'].apply(formatar_moeda_br)
+                    st.dataframe(df_parc_format, use_container_width=True, hide_index=True)
+            else:
+                st.caption("Nenhuma parcela prevista para este mês.")
             
             st.divider()
             

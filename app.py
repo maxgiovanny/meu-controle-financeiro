@@ -540,9 +540,17 @@ if check_password():
         else:
             for guia, parcelas in guias_dados.items():
                 if not parcelas: continue
+                
+                # 1. Calcula o total parcial desta fatura específica
+                total_fatura = sum(row['Valor (R$)'] for row in parcelas)
+                
                 pdf.set_font('helvetica', 'B', 9)
                 pdf.set_fill_color(245, 245, 245)
-                pdf.cell(190, 6, remover_acentos(f"    Fatura: {guia}"), border='B', ln=True, fill=True)
+                
+                # 2. Divide a linha de cabeçalho em duas: nome (esquerda) e valor (direita)
+                pdf.cell(140, 6, remover_acentos(f"    Fatura: {guia}"), border='B', fill=True)
+                pdf.cell(50, 6, formatar_moeda_pdf(total_fatura), border='B', ln=True, align="R", fill=True)
+                
                 pdf.set_font('helvetica', '', 9)
                 for row in parcelas:
                     linha_texto = f"        - {row['Descrição']} ({row['Categoria']})"

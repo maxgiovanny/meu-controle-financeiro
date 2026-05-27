@@ -287,7 +287,6 @@ for chave in list(result["historico_casuais"].keys()):
         chave_limpa = chave.strip()
         if chave_limpa != chave:
             result["historico_casuais"][chave_limpa] = result["historico_casuais"].pop(chave)
-
         return result, False
 
     # --- ESCRITA SEGURA (protegida) ---

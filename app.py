@@ -204,22 +204,35 @@ if check_password():
         dict_guias = {}
         if len(all_guias) > 1:
             for row in all_guias[1:]:
-                # Ordem: Guia, Descrição, Categoria, Valor Parcela, Data Compra, Mês Início, Ano Início, Qtd Parcelas, Pago
-                if len(row) < 9: continue
+                # Aceita formato antigo (7 colunas) ou novo (9 colunas)
+                if len(row) < 7: continue
                 guia = safe_str(row[0])
                 if not guia: continue
                 descricao = safe_str(row[1])
                 categoria = safe_str(row[2])
                 valor_parcela = moeda_para_float(row[3])
-                data_compra_str = safe_str(row[4])
+                
+                # Determinar se tem as colunas novas (Data Compra e Pago)
+                if len(row) >= 9:
+                    # Novo formato
+                    data_compra_str = safe_str(row[4])
+                    mes_ini = safe_int(row[5], 1)
+                    ano_ini = safe_int(row[6], 2026)
+                    qtd = safe_int(row[7], 1)
+                    pago = safe_bool(row[8])
+                else:
+                    # Formato antigo (7 colunas): Guia, Desc, Cat, Valor, Mês Ini, Ano Ini, Qtd
+                    data_compra_str = ""
+                    mes_ini = safe_int(row[4], 1)
+                    ano_ini = safe_int(row[5], 2026)
+                    qtd = safe_int(row[6], 1)
+                    pago = False
+                
                 data_compra = None
                 if data_compra_str:
                     try: data_compra = datetime.strptime(data_compra_str, "%Y-%m-%d").date()
                     except: pass
-                mes_ini = safe_int(row[5], 1)
-                ano_ini = safe_int(row[6], 2026)
-                qtd = safe_int(row[7], 1)
-                pago = safe_bool(row[8])
+                
                 if guia not in dict_guias:
                     dict_guias[guia] = []
                 dict_guias[guia].append({

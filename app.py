@@ -279,14 +279,18 @@ if check_password():
             result[f"dados_{g}"] = dict_guias.get(g, [])
             
 # Remove entradas inválidas do histórico de casuais
-for chave in list(result["historico_casuais"].keys()):
-    if "_" not in chave:
-        del result["historico_casuais"][chave]
-    else:
-        # garante que cada chave seja string e não tenha espaços extras
-        chave_limpa = chave.strip()
-        if chave_limpa != chave:
-            result["historico_casuais"][chave_limpa] = result["historico_casuais"].pop(chave)
+        for g in result["guias_extras"]:
+            result[f"dados_{g}"] = dict_guias.get(g, [])
+
+        # Proteção extra (deve ter 4 espaços)
+        for chave in list(result["historico_casuais"].keys()):
+            if "_" not in chave:
+                del result["historico_casuais"][chave]
+            else:
+                chave_limpa = chave.strip()
+                if chave_limpa != chave:
+                    result["historico_casuais"][chave_limpa] = result["historico_casuais"].pop(chave)
+                    
         return result, False
 
     # --- ESCRITA SEGURA (protegida) ---

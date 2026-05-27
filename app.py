@@ -1032,8 +1032,25 @@ if check_password():
                     except: continue
                 if historico_df_dados:
                     df_hist = pd.DataFrame(historico_df_dados).sort_values("Data_Sort")
-                    fig_hist = px.area(df_hist, x="Mês", y=["Renda", "Despesas", "Sobra"], color_discrete_sequence=['#4D96FF', '#FF6B6B', '#6BCB77'])
-                    fig_hist.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", margin=dict(t=10,b=10,l=0,r=0), height=250, xaxis=dict(showgrid=False), yaxis=dict(showgrid=False))
+                    
+                    # Substituímos px.area por px.line e adicionamos markers=True
+                    fig_hist = px.line(
+                        df_hist, 
+                        x="Mês", 
+                        y=["Renda", "Despesas", "Sobra"], 
+                        color_discrete_sequence=['#4D96FF', '#FF6B6B', '#6BCB77'],
+                        markers=True # Adiciona os "pontos" em cada mês para facilitar a leitura
+                    )
+                    
+                    fig_hist.update_layout(
+                        plot_bgcolor="rgba(0,0,0,0)", 
+                        paper_bgcolor="rgba(0,0,0,0)", 
+                        margin=dict(t=10,b=10,l=0,r=0), 
+                        height=250, 
+                        xaxis=dict(showgrid=False), 
+                        yaxis=dict(showgrid=False),
+                        legend_title_text="Legenda" # Opcional: melhora o título da legenda
+                    )
                     st.plotly_chart(fig_hist, use_container_width=True)
 
         st.divider()

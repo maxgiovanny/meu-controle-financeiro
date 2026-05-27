@@ -750,12 +750,12 @@ if check_password():
                     cat = row["Categoria"]
                     gastos_cat_p[cat] = gastos_cat_p.get(cat, 0.0) + row["Valor (R$)"]
                 guias_dados_p = {}
+                # Sempre incluir todas as guias (não filtrar por pagamento)
                 for guia in st.session_state.guias_extras:
-                    if not st.session_state.pagamento_guias.get(guia, False):
-                        df_parc, tot, cats = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
-                        total_guias_p += tot
-                        for cat, val in cats.items(): gastos_cat_p[cat] = gastos_cat_p.get(cat, 0.0) + val
-                        guias_dados_p[guia] = df_parc.to_dict('records')
+                    df_parc, tot, cats = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
+                    total_guias_p += tot
+                    for cat, val in cats.items(): gastos_cat_p[cat] = gastos_cat_p.get(cat, 0.0) + val
+                    guias_dados_p[guia] = df_parc.to_dict('records')
                 total_renda_p = st.session_state.renda_detalhada["Valor (R$)"].sum()
                 sobra_p = total_renda_p - (t_fix_p + t_cas_p + total_guias_p)
 
@@ -889,7 +889,7 @@ if check_password():
                 del st.session_state[key]
             st.rerun()
             
-    # --- CÁLCULOS PRINCIPAIS ---
+    # --- CÁLCULOS PRINCIPAIS (todas as guias são incluídas sempre) ---
     mes_n = MESES[st.session_state.mes_atual]
     ano_r = st.session_state.ano_atual
     t_fix = st.session_state.gastos_fixos["Valor (R$)"].sum() if not st.session_state.gastos_fixos.empty else 0.0
@@ -904,14 +904,12 @@ if check_password():
         cat = row["Categoria"]
         gastos_categoria[cat] = gastos_categoria.get(cat, 0.0) + row["Valor (R$)"]
     
-    guias_nao_pagas = []
+    # Incluir TODAS as guias, independentemente da checkbox
     for guia in st.session_state.guias_extras:
-        if not st.session_state.pagamento_guias.get(guia, False):
-            guias_nao_pagas.append(guia)
-            _, tot_guia, cats_guia = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
-            total_guias += tot_guia
-            for cat, val in cats_guia.items():
-                gastos_categoria[cat] = gastos_categoria.get(cat, 0.0) + val
+        _, tot_guia, cats_guia = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
+        total_guias += tot_guia
+        for cat, val in cats_guia.items():
+            gastos_categoria[cat] = gastos_categoria.get(cat, 0.0) + val
 
     total_renda = st.session_state.renda_detalhada["Valor (R$)"].sum()
     sobra = total_renda - (t_fix + t_cas + total_guias)
@@ -947,13 +945,14 @@ if check_password():
             </div>
             """, unsafe_allow_html=True)
         
-        # Aviso de guias não pagas
-        if guias_nao_pagas:
-            with st.expander("⚠️ Guias com pagamento pendente", expanded=True):
-                for guia in guias_nao_pagas:
+        # Aviso de guias não marcadas como pagas (apenas lembrete)
+        guias_nao_marcadas = [g for g in st.session_state.guias_extras if not st.session_state.pagamento_guias.get(g, False)]
+        if guias_nao_marcadas:
+            with st.expander("⚠️ Guias com pagamento pendente (lembrete)", expanded=False):
+                for guia in guias_nao_marcadas:
                     df_parc, tot_parc, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
                     st.markdown(f"- **{guia}**: {formatar_moeda_br(tot_parc)} neste mês")
-                st.caption("Marque a guia como paga na seção 'Cartões e Guias' para remover estes valores.")
+                st.caption("Marque a guia como paga na seção 'Cartões e Guias' apenas para controle – não afeta os cálculos.")
         
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -982,9 +981,8 @@ if check_password():
                         tot_c = df_cas['Valor (R$)'].sum() if not df_cas.empty and 'Valor (R$)' in df_cas.columns else 0.0
                         tot_g = 0.0
                         for g in st.session_state.guias_extras:
-                            if not st.session_state.pagamento_guias.get(g, False):
-                                _, t_g, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{g}"), mes_idx, ano_num)
-                                tot_g += t_g
+                            _, t_g, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{g}"), mes_idx, ano_num)
+                            tot_g += t_g
                         df_ren = pd.DataFrame(st.session_state.renda_por_mes.get(chave, []))
                         tot_r = df_ren['Valor (R$)'].sum() if not df_ren.empty and 'Valor (R$)' in df_ren.columns else 0.0
                         tot_d = tot_f + tot_c + tot_g
@@ -1300,19 +1298,18 @@ if check_password():
             else: st.warning("Nenhum registro encontrado.")
 
     elif sel == "Resumo das Guias":
-        st.subheader("📊 Custos por Guia (somente não pagas)")
+        st.subheader("📊 Custos por Guia")
         dados_guias = []
         for g in st.session_state.guias_extras:
-            if not st.session_state.pagamento_guias.get(g, False):
-                _, custo, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{g}"), mes_n, ano_r)
-                dados_guias.append({"Guia": g, "Custo (R$)": custo})
+            _, custo, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{g}"), mes_n, ano_r)
+            dados_guias.append({"Guia": g, "Custo (R$)": custo})
         if dados_guias:
             df_guias = pd.DataFrame(dados_guias)
-            st.markdown(f"**Total Guias (pendentes):** {formatar_moeda_br(df_guias['Custo (R$)'].sum())}")
+            st.markdown(f"**Total Guias:** {formatar_moeda_br(df_guias['Custo (R$)'].sum())}")
             fig_guias = px.bar(df_guias, x="Guia", y="Custo (R$)", color="Guia")
             fig_guias.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_guias, use_container_width=True)
-        else: st.info("Nenhuma guia extra ou todas estão pagas.")
+        else: st.info("Nenhuma guia extra.")
         
         st.divider()
         st.subheader("📊 Gastos por Categoria")
@@ -1331,7 +1328,7 @@ if check_password():
             guia_ativa = st.selectbox("Selecione o cartão/guia para editar:", st.session_state.guias_extras, key="guia_ativa")
             
             pago_guia = st.session_state.pagamento_guias.get(guia_ativa, False)
-            novo_status = st.checkbox("✅ Esta guia está totalmente paga (não gera mais parcelas)", value=pago_guia)
+            novo_status = st.checkbox("✅ Marcar como paga (apenas lembrete, não afeta os cálculos)", value=pago_guia)
             if novo_status != pago_guia:
                 st.session_state.pagamento_guias[guia_ativa] = novo_status
                 salvar_dados_nuvem()
@@ -1345,25 +1342,21 @@ if check_password():
                     lambda x: x.date() if isinstance(x, datetime) and not pd.isna(x) else None
                 )
             
-            # Sempre calcular e mostrar as parcelas, independentemente do status de pagamento
+            # Sempre calcular e mostrar as parcelas
             df_parc, total_parc, _ = calc_parc_com_categoria(df_guia, mes_n, ano_r)
             
-            if novo_status:
-                st.info("✅ Guia marcada como paga. As parcelas abaixo **não estão sendo somadas aos totais** do mês.")
-            else:
-                st.caption("Os valores abaixo são considerados nos totais do mês.")
-                
-            st.markdown(f"**Impacto na fatura deste mês:** {formatar_moeda_br(total_parc)}")
+            st.markdown(f"**Parcelas neste mês:** {formatar_moeda_br(total_parc)}")
             if not df_parc.empty:
-                with st.expander("🔍 Ver parcelas deste mês"):
-                    df_parc_format = df_parc.copy()
-                    df_parc_format['Valor (R$)'] = df_parc_format['Valor (R$)'].apply(formatar_moeda_br)
-                    st.dataframe(df_parc_format, use_container_width=True, hide_index=True)
+                # Parcelas sempre visíveis
+                df_parc_format = df_parc.copy()
+                df_parc_format['Valor (R$)'] = df_parc_format['Valor (R$)'].apply(formatar_moeda_br)
+                st.dataframe(df_parc_format, use_container_width=True, hide_index=True)
             else:
                 st.caption("Nenhuma parcela prevista para este mês.")
             
             st.divider()
             
+            # Nova despesa em expander
             with st.expander(f"➕ Nova despesa em {guia_ativa}", expanded=False):
                 with st.form(f"form_nova_guia_{guia_ativa}"):
                     c1, c2 = st.columns(2)
@@ -1395,22 +1388,24 @@ if check_password():
                         else:
                             st.warning("Preencha a descrição.")
             
-            de = st.data_editor(
-                df_guia,
-                num_rows="dynamic",
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Valor Parcela (R$)": st.column_config.NumberColumn(format="R$ %.2f", min_value=0),
-                    "Data da Compra": st.column_config.DateColumn(format="DD/MM/YYYY"),
-                    "Mês Início (1-12)": st.column_config.NumberColumn(min_value=1, max_value=12, step=1),
-                    "Ano Início": st.column_config.NumberColumn(min_value=2000, max_value=2050, step=1),
-                    "Qtd Parcelas": st.column_config.NumberColumn(min_value=1, step=1),
-                    "Categoria": st.column_config.SelectboxColumn(options=get_categorias())
-                },
-                key=f"editor_guia_{guia_ativa}"
-            )
-            if not de.equals(df_guia):
-                st.session_state[f"dados_{guia_ativa}"] = de
-                salvar_dados_nuvem()
-                st.rerun()
+            # Tabela de edição dentro de um expander
+            with st.expander("📝 Editar todas as despesas"):
+                de = st.data_editor(
+                    df_guia,
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Valor Parcela (R$)": st.column_config.NumberColumn(format="R$ %.2f", min_value=0),
+                        "Data da Compra": st.column_config.DateColumn(format="DD/MM/YYYY"),
+                        "Mês Início (1-12)": st.column_config.NumberColumn(min_value=1, max_value=12, step=1),
+                        "Ano Início": st.column_config.NumberColumn(min_value=2000, max_value=2050, step=1),
+                        "Qtd Parcelas": st.column_config.NumberColumn(min_value=1, step=1),
+                        "Categoria": st.column_config.SelectboxColumn(options=get_categorias())
+                    },
+                    key=f"editor_guia_{guia_ativa}"
+                )
+                if not de.equals(df_guia):
+                    st.session_state[f"dados_{guia_ativa}"] = de
+                    salvar_dados_nuvem()
+                    st.rerun()

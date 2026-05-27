@@ -1144,95 +1144,6 @@ if check_password():
                 analise = analise_financeira_gemini(total_renda, gt, sobra, gastos_categoria)
             st.info(analise)
     
-    # ========== SEÇÕES ==========
-    if sel == "Resumo Geral":
-        gt = t_fix + t_cas + total_guias
-        
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.markdown(f"""
-            <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px; border-left: 5px solid #F24C3D; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                <p style="margin:0; font-size: 14px; color: #A0A0A0; font-weight: bold;">GASTO TOTAL</p>
-                <h3 style="margin:0; color: #FFFFFF; padding-top: 5px;">{formatar_moeda_br(gt)}</h3>
-            </div>
-            """, unsafe_allow_html=True)
-        with c2:
-            cor_sobra = "#00B862" if sobra >= 0 else "#F24C3D"
-            st.markdown(f"""
-            <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px; border-left: 5px solid {cor_sobra}; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                <p style="margin:0; font-size: 14px; color: #A0A0A0; font-weight: bold;">SOBRA REAL</p>
-                <h3 style="margin:0; color: #FFFFFF; padding-top: 5px;">{formatar_moeda_br(sobra)}</h3>
-            </div>
-            """, unsafe_allow_html=True)
-        with c3:
-            st.markdown(f"""
-            <div style="background-color: #1E1E1E; padding: 20px; border-radius: 10px; border-left: 5px solid #4A90E2; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
-                <p style="margin:0; font-size: 14px; color: #A0A0A0; font-weight: bold;">RENDA TOTAL</p>
-                <h3 style="margin:0; color: #FFFFFF; padding-top: 5px;">{formatar_moeda_br(total_renda)}</h3>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        # Aviso de guias não marcadas como pagas (apenas lembrete)
-        guias_nao_marcadas = [g for g in st.session_state.guias_extras if not st.session_state.pagamento_guias.get(g, False)]
-        if guias_nao_marcadas:
-            with st.expander("⚠️ Guias com pagamento pendente (lembrete)", expanded=False):
-                for guia in guias_nao_marcadas:
-                    df_parc, tot_parc, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
-                    st.markdown(f"- **{guia}**: {formatar_moeda_br(tot_parc)} neste mês")
-                st.caption("Marque a guia como paga na seção 'Cartões e Guias' apenas para controle – não afeta os cálculos.")
-        
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        col_graf1, col_graf2 = st.columns([1, 2])
-        with col_graf1:
-            st.markdown("#### Divisão de Despesas")
-            df_pizza = pd.DataFrame({"C":["Fixos","Dia a Dia","Guias","Sobra"],"V":[t_fix,t_cas,total_guias,max(0,sobra)]})
-            fig = px.pie(df_pizza, values='V', names='C', hole=.5, color_discrete_sequence=['#FF6B6B', '#FFD93D', '#6BCB77', '#4D96FF'])
-            fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", margin=dict(t=10,b=10,l=0,r=0), height=250, showlegend=False)
-            fig.update_traces(textposition='inside', textinfo='percent+label')
-            st.plotly_chart(fig, use_container_width=True)
-
-        with col_graf2:
-            st.markdown("#### Evolução Anual")
-            historico_df_dados = []
-            chaves_todas = set(list(st.session_state.historico_fixos.keys()) + list(st.session_state.historico_casuais.keys()) + list(st.session_state.renda_por_mes.keys()))
-            if chaves_todas:
-                for chave in chaves_todas:
-                    try:
-                        mes_str, ano_str = chave.split('_')
-                        mes_idx = MESES.get(mes_str, 1)
-                        ano_num = int(ano_str)
-                        df_fixos = pd.DataFrame(st.session_state.historico_fixos.get(chave, []))
-                        tot_f = df_fixos['Valor (R$)'].sum() if not df_fixos.empty and 'Valor (R$)' in df_fixos.columns else 0.0
-                        df_cas = pd.DataFrame(st.session_state.historico_casuais.get(chave, []))
-                        tot_c = df_cas['Valor (R$)'].sum() if not df_cas.empty and 'Valor (R$)' in df_cas.columns else 0.0
-                        tot_g = 0.0
-                        for g in st.session_state.guias_extras:
-                            _, t_g, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{g}"), mes_idx, ano_num)
-                            tot_g += t_g
-                        df_ren = pd.DataFrame(st.session_state.renda_por_mes.get(chave, []))
-                        tot_r = df_ren['Valor (R$)'].sum() if not df_ren.empty and 'Valor (R$)' in df_ren.columns else 0.0
-                        tot_d = tot_f + tot_c + tot_g
-                        historico_df_dados.append({
-                            "Data_Sort": datetime(ano_num, mes_idx, 1),
-                            "Mês": f"{mes_str[:3]}/{str(ano_str)[2:]}",
-                            "Renda": tot_r,
-                            "Despesas": tot_d,
-                            "Sobra": tot_r - tot_d
-                        })
-                    except: continue
-                if historico_df_dados:
-                    df_hist = pd.DataFrame(historico_df_dados).sort_values("Data_Sort")
-                    fig_hist = px.area(df_hist, x="Mês", y=["Renda", "Despesas", "Sobra"], color_discrete_sequence=['#4D96FF', '#FF6B6B', '#6BCB77'])
-                    fig_hist.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", margin=dict(t=10,b=10,l=0,r=0), height=250, xaxis=dict(showgrid=False), yaxis=dict(showgrid=False))
-                    st.plotly_chart(fig_hist, use_container_width=True)
-
-        st.divider()
-        if st.button("🤖 Análise da IA para este mês"):
-            with st.spinner("Consultando o Gemini..."):
-                analise = analise_financeira_gemini(total_renda, gt, sobra, gastos_categoria)
-            st.info(analise)
-
     elif sel == "Renda":
         st.subheader("💵 Fontes de Renda")
         er = st.data_editor(
@@ -1264,9 +1175,16 @@ if check_password():
                 n_desc = c1.text_input("Descrição do Gasto")
                 n_cat = c2.selectbox("Categoria", get_categorias())
                 n_val = c3.number_input("Valor (R$)", min_value=0.0, format="%.2f")
+                n_venc = st.date_input("Data de Vencimento (opcional)", value=None, help="Data prevista para pagamento")
                 if st.form_submit_button("Guardar Lançamento"):
                     if n_desc:
-                        nova_linha = pd.DataFrame([{"Descrição": n_desc, "Valor (R$)": n_val, "Pago": False, "Categoria": n_cat}])
+                        nova_linha = pd.DataFrame([{
+                            "Descrição": n_desc,
+                            "Valor (R$)": n_val,
+                            "Pago": False,
+                            "Categoria": n_cat,
+                            "Data de Vencimento": n_venc
+                        }])
                         st.session_state.gastos_fixos = pd.concat([st.session_state.gastos_fixos, nova_linha], ignore_index=True)
                         salvar_dados_nuvem()
                         st.success("Adicionado!")
@@ -1289,7 +1207,8 @@ if check_password():
             column_config={
                 "Valor (R$)": st.column_config.NumberColumn(format="R$ %.2f", min_value=0),
                 "Pago": st.column_config.CheckboxColumn(),
-                "Categoria": st.column_config.SelectboxColumn(options=get_categorias())
+                "Categoria": st.column_config.SelectboxColumn(options=get_categorias()),
+                "Data de Vencimento": st.column_config.DateColumn(format="DD/MM/YYYY")
             }
         )
         if not ef.equals(st.session_state.gastos_fixos):

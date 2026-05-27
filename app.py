@@ -705,15 +705,15 @@ if check_password():
         lista_meses = list(MESES.keys())
         idx_mes_atual = lista_meses.index(st.session_state.mes_atual)
 
-        with c_esq:
+with c_esq:
             if st.button("◀", use_container_width=True, key="btn_mes_ant"):
+                salvar_dados_nuvem() # Salva a tela atual ANTES de mudar o mês
                 if idx_mes_atual == 0:
                     st.session_state.mes_atual = lista_meses[11]
                     st.session_state.ano_atual -= 1
                 else:
                     st.session_state.mes_atual = lista_meses[idx_mes_atual - 1]
-                salvar_dados_nuvem()
-                carregar_dados_sessao()
+                carregar_dados_sessao() # Carrega os dados zerados/corretos do novo mês
                 st.session_state.pdf_ready = False
                 st.rerun()
 
@@ -722,13 +722,13 @@ if check_password():
 
         with c_dir:
             if st.button("▶", use_container_width=True, key="btn_mes_prox"):
+                salvar_dados_nuvem() # Salva a tela atual ANTES de mudar o mês
                 if idx_mes_atual == 11:
                     st.session_state.mes_atual = lista_meses[0]
                     st.session_state.ano_atual += 1
                 else:
                     st.session_state.mes_atual = lista_meses[idx_mes_atual + 1]
-                salvar_dados_nuvem()
-                carregar_dados_sessao()
+                carregar_dados_sessao() # Carrega os dados zerados/corretos do novo mês
                 st.session_state.pdf_ready = False
                 st.rerun()
                 

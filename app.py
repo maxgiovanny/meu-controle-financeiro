@@ -630,30 +630,53 @@ if check_password():
         return st.session_state.categorias_padrao + st.session_state.categorias_personalizadas
 
     # --- SIDEBAR (NOVA NAVEGAÇÃO E CONFIGURAÇÕES) ---
-    opcoes = ["Resumo Geral", "Renda", "Gastos Fixos", "Dia a Dia", "Investimentos", "Resumo das Guias", "Metas de Orçamento", "Pesquisa Global"] + st.session_state.guias_extras
+    # Removido st.session_state.guias_extras do menu principal e adicionada a aba agrupada
+    opcoes = ["Resumo Geral", "Renda", "Gastos Fixos", "Dia a Dia", "Investimentos", "Cartões e Guias", "Resumo das Guias", "Metas de Orçamento", "Pesquisa Global"]
 
     with st.sidebar:
         st.markdown(f"<h3 style='text-align: center;'>👤 Olá, {str(st.session_state.get('usuario_logado', '')).title()}</h3>", unsafe_allow_html=True)
         st.markdown("---")
         
+        st.subheader("📅 Mês de Referência")
+        
+        # --- NOVO SELETOR DE MÊS COM SETAS ---
+        c_esq, c_meio, c_dir = st.columns([1, 2, 1])
+        lista_meses = list(MESES.keys())
+        idx_mes_atual = lista_meses.index(st.session_state.mes_atual)
+
+        with c_esq:
+            if st.button("◀", use_container_width=True, key="btn_mes_ant"):
+                if idx_mes_atual == 0:
+                    st.session_state.mes_atual = lista_meses[11]
+                    st.session_state.ano_atual -= 1
+                else:
+                    st.session_state.mes_atual = lista_meses[idx_mes_atual - 1]
+                salvar_dados_nuvem()
+                carregar_dados_sessao()
+                st.session_state.pdf_ready = False
+                st.rerun()
+
+        with c_meio:
+            st.markdown(f"<div style='text-align: center; font-weight: bold; margin-top: 5px; font-size: 16px;'>{st.session_state.mes_atual}<br><span style='font-size: 12px; color: #A0A0A0;'>{st.session_state.ano_atual}</span></div>", unsafe_allow_html=True)
+
+        with c_dir:
+            if st.button("▶", use_container_width=True, key="btn_mes_prox"):
+                if idx_mes_atual == 11:
+                    st.session_state.mes_atual = lista_meses[0]
+                    st.session_state.ano_atual += 1
+                else:
+                    st.session_state.mes_atual = lista_meses[idx_mes_atual + 1]
+                salvar_dados_nuvem()
+                carregar_dados_sessao()
+                st.session_state.pdf_ready = False
+                st.rerun()
+                
+        st.markdown("---")
         st.subheader("Navegação Principal")
         sel = st.radio("", opcoes, label_visibility="collapsed")
         
         st.markdown("---")
-        st.subheader("⚙️ Filtros e Configurações")
-        
-        c_mes, c_ano = st.columns(2)
-        with c_mes:
-            m_sel = st.selectbox("Mês:", list(MESES.keys()), index=list(MESES.keys()).index(st.session_state.mes_atual))
-        with c_ano:
-            a_sel = st.number_input("Ano:", 2024, 2030, st.session_state.ano_atual)
-            
-        if m_sel != st.session_state.mes_atual or a_sel != st.session_state.ano_atual:
-            salvar_dados_nuvem()
-            st.session_state.mes_atual, st.session_state.ano_atual = m_sel, a_sel
-            carregar_dados_sessao()
-            st.session_state.pdf_ready = False
-            st.rerun()
+        st.subheader("⚙️ Configurações")
 
         if st.button("🔄 Recarregar Nuvem", use_container_width=True):
             for key in ["dados_carregados", "historico_fixos", "historico_casuais", "guias_extras", 
@@ -760,7 +783,7 @@ if check_password():
         st.divider()
         st.subheader("🛠️ Gerenciar Guias")
         with st.expander("Opções de gerenciamento"):
-            ng = st.text_input("Nova Guia:")
+            ng = st.text_input("Nova Guia/Cartão:")
             if st.button("➕ Criar", key="add_guia"):
                 if ng and ng not in st.session_state.guias_extras:
                     st.session_state.guias_extras.append(ng)
@@ -768,7 +791,7 @@ if check_password():
                     salvar_dados_nuvem()
                     st.rerun()
             if st.session_state.guias_extras:
-                g_ativa = st.selectbox("Guia para editar:", st.session_state.guias_extras, key="guia_edit")
+                g_ativa = st.selectbox("Cartão para editar:", st.session_state.guias_extras, key="guia_edit")
                 novo_nome = st.text_input("Renomear para:", key="rename_guia")
                 col1, col2 = st.columns(2)
                 with col1:
@@ -1248,47 +1271,59 @@ if check_password():
             st.plotly_chart(fig_cat, use_container_width=True)
         else: st.info("Nenhum gasto registrado.")
 
-    else:  # --- GUIAS EXTRAS INDIVIDUAIS ---
-        df_parc, total_parc, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{sel}"), mes_n, ano_r)
-        st.subheader(f"Total no Mês: {formatar_moeda_br(total_parc)}")
-        if not df_parc.empty:
-            df_parc_print = df_parc.copy()
-            df_parc_print['Valor (R$)'] = df_parc_print['Valor (R$)'].apply(formatar_moeda_br)
-            st.dataframe(df_parc_print, use_container_width=True, hide_index=True)
-        st.divider()
+    elif sel == "Cartões e Guias":  # --- NOVA ABA AGRUPADA PARA CARTÕES ---
+        st.subheader("💳 Cartões de Crédito e Guias Extras")
         
-        with st.expander(f"➕ Novo Lançamento ({sel})", expanded=False):
-            with st.form(f"form_nova_guia_{sel}"):
-                c1, c2 = st.columns(2)
-                n_desc = c1.text_input("Descrição")
-                n_cat = c2.selectbox("Categoria", get_categorias())
-                c3, c4, c5, c6 = st.columns(4)
-                n_val = c3.number_input("Valor Parcela (R$)", min_value=0.0, format="%.2f")
-                n_qtd = c4.number_input("Qtd Parcelas", min_value=1, step=1, value=1)
-                n_mes_ini = c5.number_input("Mês Início", min_value=1, max_value=12, step=1, value=mes_n)
-                n_ano_ini = c6.number_input("Ano Início", min_value=2000, max_value=2050, step=1, value=ano_r)
-                
-                if st.form_submit_button("Guardar"):
-                    if n_desc:
-                        nova_linha = pd.DataFrame([{"Descrição": n_desc, "Valor Parcela (R$)": n_val, "Mês Início (1-12)": n_mes_ini, "Ano Início": n_ano_ini, "Qtd Parcelas": n_qtd, "Categoria": n_cat}])
-                        st.session_state[f"dados_{sel}"] = pd.concat([st.session_state[f"dados_{sel}"], nova_linha], ignore_index=True)
+        if not st.session_state.guias_extras:
+            st.info("Nenhum cartão cadastrado. Vá na barra lateral em 'Gerenciar Guias' para criar.")
+        else:
+            # Cria as abas superiores dinamicamente para cada guia/cartão
+            abas_cartoes = st.tabs(st.session_state.guias_extras)
+            
+            for i, guia in enumerate(st.session_state.guias_extras):
+                with abas_cartoes[i]:
+                    df_parc, total_parc, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
+                    st.markdown(f"**Total da Fatura:** {formatar_moeda_br(total_parc)}")
+                    
+                    if not df_parc.empty:
+                        df_parc_print = df_parc.copy()
+                        df_parc_print['Valor (R$)'] = df_parc_print['Valor (R$)'].apply(formatar_moeda_br)
+                        st.dataframe(df_parc_print, use_container_width=True, hide_index=True)
+                    st.divider()
+                    
+                    with st.expander(f"➕ Novo Lançamento em {guia}", expanded=False):
+                        with st.form(f"form_nova_guia_{guia}"):
+                            c1, c2 = st.columns(2)
+                            n_desc = c1.text_input("Descrição")
+                            n_cat = c2.selectbox("Categoria", get_categorias())
+                            c3, c4, c5, c6 = st.columns(4)
+                            n_val = c3.number_input("Valor Parcela (R$)", min_value=0.0, format="%.2f")
+                            n_qtd = c4.number_input("Qtd Parcelas", min_value=1, step=1, value=1)
+                            n_mes_ini = c5.number_input("Mês Início", min_value=1, max_value=12, step=1, value=mes_n)
+                            n_ano_ini = c6.number_input("Ano Início", min_value=2000, max_value=2050, step=1, value=ano_r)
+                            
+                            if st.form_submit_button("Guardar"):
+                                if n_desc:
+                                    nova_linha = pd.DataFrame([{"Descrição": n_desc, "Valor Parcela (R$)": n_val, "Mês Início (1-12)": n_mes_ini, "Ano Início": n_ano_ini, "Qtd Parcelas": n_qtd, "Categoria": n_cat}])
+                                    st.session_state[f"dados_{guia}"] = pd.concat([st.session_state[f"dados_{guia}"], nova_linha], ignore_index=True)
+                                    salvar_dados_nuvem()
+                                    st.rerun()
+
+                    de = st.data_editor(
+                        st.session_state[f"dados_{guia}"],
+                        num_rows="dynamic",
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "Valor Parcela (R$)": st.column_config.NumberColumn(format="R$ %.2f", min_value=0),
+                            "Mês Início (1-12)": st.column_config.NumberColumn(min_value=1, max_value=12, step=1),
+                            "Ano Início": st.column_config.NumberColumn(min_value=2000, max_value=2050, step=1),
+                            "Qtd Parcelas": st.column_config.NumberColumn(min_value=1, step=1),
+                            "Categoria": st.column_config.SelectboxColumn(options=get_categorias())
+                        },
+                        key=f"editor_guia_{guia}" # A chave única é fundamental aqui para múltiplas abas!
+                    )
+                    if not de.equals(st.session_state[f"dados_{guia}"]):
+                        st.session_state[f"dados_{guia}"] = de
                         salvar_dados_nuvem()
                         st.rerun()
-
-        de = st.data_editor(
-            st.session_state[f"dados_{sel}"],
-            num_rows="dynamic",
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Valor Parcela (R$)": st.column_config.NumberColumn(format="R$ %.2f", min_value=0),
-                "Mês Início (1-12)": st.column_config.NumberColumn(min_value=1, max_value=12, step=1),
-                "Ano Início": st.column_config.NumberColumn(min_value=2000, max_value=2050, step=1),
-                "Qtd Parcelas": st.column_config.NumberColumn(min_value=1, step=1),
-                "Categoria": st.column_config.SelectboxColumn(options=get_categorias())
-            }
-        )
-        if not de.equals(st.session_state[f"dados_{sel}"]):
-            st.session_state[f"dados_{sel}"] = de
-            salvar_dados_nuvem()
-            st.rerun()

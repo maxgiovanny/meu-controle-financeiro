@@ -277,6 +277,7 @@ if check_password():
         }
         for g in result["guias_extras"]:
             result[f"dados_{g}"] = dict_guias.get(g, [])
+            
     for chave in list(result["historico_casuais"].keys()):
     if "_" not in chave:
         del result["historico_casuais"][chave]

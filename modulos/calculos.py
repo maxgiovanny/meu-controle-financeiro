@@ -1,5 +1,9 @@
 import pandas as pd
+import streamlit as st
 from modulos.utilidades import safe_int, safe_float, MESES
+
+@st.cache_data(ttl=3600)
+def calc_parc_com_categoria(df, m, a):
 
 def obter_mes_anterior(mes_nome, ano_atual):
     lista = list(MESES.keys())

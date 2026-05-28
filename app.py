@@ -1052,7 +1052,7 @@ if check_password():
         
         st.markdown("<br>", unsafe_allow_html=True)
 
-      col_graf1 = st.columns([1, 2])
+      col_graf1 = st.columns([1])
       
 # --- DIAGRAMA DE SANKEY ---
         st.markdown("#### Fluxo do Dinheiro (Sankey)")

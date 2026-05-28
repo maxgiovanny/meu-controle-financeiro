@@ -1,9 +1,10 @@
 import pandas as pd
 import math
 import re
+import unicodedata
 
 MESES = {"Janeiro":1,"Fevereiro":2,"Março":3,"Abril":4,"Maio":5,"Junho":6,
-         "Julho":7,"Agosto":8,"Setembro":9,"Outubro":10,"Novembro":11,"Dezembro":12}
+         "Julho":7,"Agosto":8,"Setembro":9,"Octubro":10,"Novembro":11,"Dezembro":12}
 CATEGORIAS_PADRAO_BASE = ["Alimentação","Transporte","Lazer","Saúde","Casa","Trabalho","Outros"]
 
 def formatar_moeda_br(valor):
@@ -50,3 +51,7 @@ def safe_bool(val):
         if pd.isna(val): return False
         return str(val).strip().lower() in ['true', '1', 't', 'y', 'yes']
     except: return False
+
+def remover_acentos(texto):
+    if not isinstance(texto, str): texto = str(texto)
+    return unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')

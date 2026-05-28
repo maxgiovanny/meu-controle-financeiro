@@ -2,14 +2,12 @@ import streamlit as st
 import pandas as pd
 from modulos.utilidades import safe_int, safe_float, MESES
 
-@st.cache_data(ttl=3600)
-def calc_parc_com_categoria(df, m, a):
-
 def obter_mes_anterior(mes_nome, ano_atual):
     lista = list(MESES.keys())
     idx = lista.index(mes_nome)
     return (lista[idx - 1], ano_atual) if idx > 0 else ("Dezembro", ano_atual - 1)
 
+@st.cache_data(ttl=3600)
 def calc_parc_com_categoria(df, m, a):
     parcelas = []
     if df is None or df.empty:

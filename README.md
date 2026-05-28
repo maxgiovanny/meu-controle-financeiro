@@ -50,6 +50,7 @@ meu-controle-financeiro/
 - Uma conta Google com acesso ao **Google Sheets** e ao **Google Cloud Console**.
 - Uma **chave de API do Gemini** (opcional, mas recomendada para as funções de IA).
 - As seguintes bibliotecas (listadas em `requirements.txt`):
+```bash
 streamlit
 pandas
 gspread
@@ -60,7 +61,7 @@ google-genai
 Pillow
 PyPDF2
 pytest
-
+````
 ---
 
 ## 🔧 Configuração
@@ -70,18 +71,22 @@ pytest
 ```bash
 git clone https://github.com/seu-usuario/meu-controle-financeiro.git
 cd meu-controle-financeiro
+```
 
 2. Crie e ative um ambiente virtual (recomendado)
+```bash
 python -m venv venv
 # Windows:
 venv\Scripts\activate
 # Linux/macOS:
 source venv/bin/activate
-
+````
 3. Instale as dependências
+```bash
 pip install -r requirements.txt
-
+```
 4. Configure os segredos (secrets.toml)
+```bash
 # Usuários e senhas para login
 [usuarios]
 [usuarios.usuario1]
@@ -107,7 +112,7 @@ client_x509_cert_url = "..."
 
 # Chave da API Gemini (opcional)
 GEMINI_API_KEY = "sua-chave-aqui"
-
+```
 5. Prepare a planilha do Google Sheets
 
 Sua planilha deve conter, pelo menos, as seguintes abas:

@@ -1035,31 +1035,6 @@ if check_password():
                         for _, row in contas_vencendo.iterrows():
                             st.write(f"- **{row['Descrição']}**: {formatar_moeda_br(row['Valor (R$)'])} (Vence dia {int(row['Dia Venc.'])})")
 
-        # --- META DE POUPANÇA MENSAL ---
-        st.markdown("---")
-        st.markdown("#### 🎯 Progresso da Poupança (Sobra do Mês)")
-        meta_poupanca = st.session_state.metas_orcamento.get("META_POUPANCA_GLOBAL", 0.0)
-        
-        col_p1, col_p2 = st.columns([1, 3])
-        with col_p1:
-            nova_meta_poupanca = st.number_input("Definir Meta (R$)", value=float(meta_poupanca), step=100.0, help="Quanto você quer que sobre neste mês?")
-            if nova_meta_poupanca != meta_poupanca:
-                st.session_state.metas_orcamento["META_POUPANCA_GLOBAL"] = nova_meta_poupanca
-                salvar_dados_nuvem()
-                st.rerun()
-        
-        with col_p2:
-            st.write("<br>", unsafe_allow_html=True)
-            if nova_meta_poupanca > 0:
-                progresso = max(0.0, min(sobra / nova_meta_poupanca, 1.0))
-                st.progress(progresso)
-                if sobra >= nova_meta_poupanca:
-                    st.success(f"🎉 Parabéns! Você atingiu sua meta de poupar {formatar_moeda_br(nova_meta_poupanca)}!")
-                elif sobra > 0:
-                    st.info(f"Faltam {formatar_moeda_br(nova_meta_poupanca - sobra)} para atingir a meta.")
-                else:
-                    st.error("O orçamento já estourou! Reveja seus gastos para tentar recuperar a meta.")
-
         # Aviso de guias não marcadas como pagas (apenas lembrete)
         chave_atual = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
         if chave_atual not in st.session_state.pagamento_guias:

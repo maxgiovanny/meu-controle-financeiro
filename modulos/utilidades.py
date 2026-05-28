@@ -55,31 +55,3 @@ def safe_bool(val):
 def remover_acentos(texto):
     if not isinstance(texto, str): texto = str(texto)
     return unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')
-
-def formatar_moeda_br(valor):
-    """Formata um número float para o padrão monetário brasileiro (R$ 1.234,56)."""
-    ...
-
-def moeda_para_float(valor_str):
-    """Converte uma string de moeda brasileira (ex.: 'R$ 1.234,56') para float."""
-    ...
-
-def safe_float(val, default=0.0):
-    """Converte valor para float com segurança, retornando default se inválido."""
-    ...
-
-def safe_int(val, default=1):
-    """Converte valor para int com segurança, retornando default se inválido."""
-    ...
-
-def safe_str(val):
-    """Converte valor para string com segurança, retornando '' se NaN."""
-    ...
-
-def safe_bool(val):
-    """Converte valor para bool com segurança (aceita 'true', '1', 't', 'yes')."""
-    ...
-
-def remover_acentos(texto):
-    """Remove acentos e caracteres especiais de uma string."""
-    ...

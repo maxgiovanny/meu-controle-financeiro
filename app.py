@@ -679,6 +679,30 @@ if check_password():
         except Exception as e:
             st.error(f"Erro ao extrair: {e}")
             return None
+    def extrair_lote_extrato_gemini(texto_extrato):
+        if not gemini_ok or client is None: return None
+        categorias_disponiveis = get_categorias()
+        prompt = f"""
+        Aqui está o texto de um extrato bancário. Sua tarefa é extrair APENAS as DESPESAS/SAÍDAS (ignore recebimentos, transferências de mesma titularidade, saldos ou resgates de investimento).
+        Para cada despesa encontrada, classifique-a em uma destas categorias: {', '.join(categorias_disponiveis)}.
+        
+        Retorne EXATAMENTE um array JSON, sem formatação markdown (```json), neste formato:
+        [
+            {{"Data": "YYYY-MM-DD", "Descrição": "Nome do local/Gasto", "Categoria": "Nome da Categoria", "Valor (R$)": 150.50}},
+            ...
+        ]
+        
+        Texto do extrato:
+        {texto_extrato}
+        """
+        try:
+            resposta = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+            texto_limpo = resposta.text.replace("```json", "").replace("```", "").strip()
+            import json
+            return json.loads(texto_limpo)
+        except Exception as e:
+            st.error(f"Erro na extração em lote: {e}")
+            return None
     
     # --- INICIALIZAÇÃO ---
     if "dados_carregados" not in st.session_state:
@@ -740,7 +764,7 @@ if check_password():
         return st.session_state.categorias_padrao + st.session_state.categorias_personalizadas
 
     # --- SIDEBAR (NAVEGAÇÃO E CONFIGURAÇÕES) ---
-    opcoes = ["Resumo Geral", "Renda", "Gastos Fixos", "Dia a Dia", "Investimentos", "Cartões e Guias", "Resumo das Guias", "Metas de Orçamento", "Pesquisa Global"]
+    opcoes = ["Resumo Geral", "Renda", "Gastos Fixos", "Dia a Dia", "Investimentos", "Cartões e Guias", "Resumo das Guias", "Metas de Orçamento", "Projeção Futura", "Pesquisa Global"]
 
     with st.sidebar:
         st.markdown(f"<h3 style='text-align: center;'>👤 Olá, {str(st.session_state.get('usuario_logado', '')).title()}</h3>", unsafe_allow_html=True)
@@ -1283,6 +1307,58 @@ if check_password():
                     if st.button("❌ Cancelar"):
                         del st.session_state["recibo_pendente"]
                         st.rerun()
+                with st.expander("📥 Importar Extrato em Lote (PDF ou CSV) via IA", expanded=False):
+            arquivo_extrato = st.file_uploader("Envie seu extrato bancário", type=["pdf", "csv"])
+            
+            if arquivo_extrato is not None:
+                if st.button("🪄 Processar Extrato"):
+                    with st.spinner("A IA está lendo o extrato e categorizando os gastos (isso pode levar alguns segundos)..."):
+                        texto_completo = ""
+                        # Se for PDF, extrai texto com PyPDF2
+                        if arquivo_extrato.name.endswith('.pdf'):
+                            leitor = PyPDF2.PdfReader(arquivo_extrato)
+                            for pagina in leitor.pages:
+                                texto_completo += pagina.extract_text() + "\n"
+                        # Se for CSV, lê como string
+                        elif arquivo_extrato.name.endswith('.csv'):
+                            texto_completo = arquivo_extrato.getvalue().decode("utf-8")
+                            
+                        dados_lote = extrair_lote_extrato_gemini(texto_completo)
+                        
+                        if dados_lote and isinstance(dados_lote, list):
+                            st.session_state["lote_pendente"] = pd.DataFrame(dados_lote)
+                            st.success(f"{len(dados_lote)} despesas encontradas!")
+                        else:
+                            st.error("Não foi possível extrair dados estruturados deste arquivo.")
+            
+            if "lote_pendente" in st.session_state:
+                st.info("Revise os dados importados. Você pode editar as células antes de salvar.")
+                df_lote = st.session_state["lote_pendente"]
+                df_lote['Data'] = pd.to_datetime(df_lote['Data'], errors='coerce').dt.date
+                
+                df_editado = st.data_editor(
+                    df_lote,
+                    num_rows="dynamic",
+                    column_config={
+                        "Data": st.column_config.DateColumn(format="DD/MM/YYYY"),
+                        "Categoria": st.column_config.SelectboxColumn(options=get_categorias()),
+                        "Valor (R$)": st.column_config.NumberColumn(format="R$ %.2f", min_value=0)
+                    },
+                    use_container_width=True
+                )
+                
+                col_sl, col_cl = st.columns(2)
+                with col_sl:
+                    if st.button("✅ Confirmar e Salvar Tudo"):
+                        st.session_state.gastos_casuais = pd.concat([st.session_state.gastos_casuais, df_editado], ignore_index=True)
+                        salvar_dados_nuvem()
+                        del st.session_state["lote_pendente"]
+                        st.success("Lote salvo com sucesso!")
+                        st.rerun()
+                with col_cl:
+                    if st.button("❌ Cancelar Importação"):
+                        del st.session_state["lote_pendente"]
+                        st.rerun()
         st.divider()
 
         ec = st.data_editor(
@@ -1420,6 +1496,54 @@ if check_password():
                             salvar_dados_nuvem()
                             st.rerun()
                 st.divider()
+                
+    elif sel == "Projeção Futura":
+        st.subheader("🔭 Projeção de Gastos (Próximos 6 Meses)")
+        st.write("Esta visão soma os seus gastos **Fixos** atuais (assumindo que se mantêm) com as parcelas já comprometidas dos seus **Cartões e Guias** para os próximos meses.")
+        
+        projecoes = []
+        # Clonar mês e ano atual para iterar
+        m_iter = mes_n
+        a_iter = ano_r
+        
+        # Pega a lista de meses para pegar os nomes
+        lista_meses_nomes = list(MESES.keys())
+        
+        for i in range(6):
+            nome_mes = lista_meses_nomes[m_iter - 1]
+            label_mes = f"{nome_mes[:3]}/{str(a_iter)[2:]}"
+            
+            # 1. Calcula Fixos (Assumimos que o valor do mês atual se repete)
+            # Pode ser aprimorado no futuro para ler meses já criados
+            total_fixo_futuro = t_fix
+            
+            # 2. Calcula Guias e Cartões para aquele mês específico
+            total_guias_futuro = 0.0
+            for g in st.session_state.guias_extras:
+                _, tot_g_futuro, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{g}"), m_iter, a_iter)
+                total_guias_futuro += tot_g_futuro
+                
+            projecoes.append({
+                "Mês": label_mes,
+                "Tipo": "Gastos Fixos",
+                "Valor (R$)": total_fixo_futuro
+            })
+            projecoes.append({
+                "Mês": label_mes,
+                "Tipo": "Cartões e Guias",
+                "Valor (R$)": total_guias_futuro
+            })
+            
+            # Avança 1 mês
+            m_iter += 1
+            if m_iter > 12:
+                m_iter = 1
+                a_iter += 1
+                
+        df_proj = pd.DataFrame(projecoes)
+        fig_proj = px.bar(df_proj, x="Mês", y="Valor (R$)", color="Tipo", text_auto='.2s', color_discrete_sequence=['#FF6B6B', '#6BCB77'])
+        fig_proj.update_layout(barmode='stack', plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+        st.plotly_chart(fig_proj, use_container_width=True)
 
     elif sel == "Pesquisa Global":
         st.subheader("🔍 Procurar no Histórico")

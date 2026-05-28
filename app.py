@@ -565,18 +565,20 @@ if check_password():
                             salvar_dados_nuvem()
                             st.rerun()
                 st.divider()
-
     elif sel == "Projeção Futura":
         st.subheader("🔭 Projeção de Gastos (Próximos 6 Meses)")
 
-        # Menu suspenso para escolher o tipo de visão
+        # Menu suspenso com três opções
         tipo_projecao = st.selectbox(
             "Tipo de visão:",
-            ["Geral (Fixos + Guias)", "Por Guia (Detalhado)"]
+            ["Geral (Fixos + Guias)", "Por Guia (Todas)", "Por Guia (Individual)"]
         )
 
         lista_meses_nomes = list(MESES.keys())
 
+        # ------------------------------------------------------------------
+        # 1. VISÃO GERAL (Fixos + Guias empilhados)
+        # ------------------------------------------------------------------
         if tipo_projecao == "Geral (Fixos + Guias)":
             st.write("Esta visão soma os seus gastos **Fixos** atuais (assumindo que se mantêm) com as parcelas já comprometidas dos seus **Cartões e Guias** para os próximos meses.")
 
@@ -605,7 +607,10 @@ if check_password():
             fig_proj.update_layout(barmode='stack', plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_proj, use_container_width=True)
 
-        else:  # Por Guia (Detalhado)
+        # ------------------------------------------------------------------
+        # 2. POR GUIA (TODAS)
+        # ------------------------------------------------------------------
+        elif tipo_projecao == "Por Guia (Todas)":
             st.write("Projeção individual de cada **Cartão/Guia** para os próximos meses.")
 
             if not st.session_state.guias_extras:
@@ -632,7 +637,7 @@ if check_password():
 
                 df_proj_guias = pd.DataFrame(projecoes_guias)
 
-                # Gráfico de barras agrupadas por guia
+                # Gráfico de barras agrupadas
                 fig_guias = px.bar(
                     df_proj_guias,
                     x="Mês",
@@ -644,12 +649,60 @@ if check_password():
                 fig_guias.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
                 st.plotly_chart(fig_guias, use_container_width=True)
 
-                # Tabela opcional com os valores
+                # Tabela detalhada
                 with st.expander("📋 Ver tabela detalhada"):
                     pivot = df_proj_guias.pivot(index="Mês", columns="Guia", values="Valor (R$)")
                     pivot = pivot.fillna(0)
                     pivot["Total"] = pivot.sum(axis=1)
                     st.dataframe(pivot.style.format("R$ {:,.2f}"), use_container_width=True)
+
+        # ------------------------------------------------------------------
+        # 3. POR GUIA (INDIVIDUAL)
+        # ------------------------------------------------------------------
+        else:
+            st.write("Selecione um cartão/guia para visualizar a projeção apenas dele.")
+
+            if not st.session_state.guias_extras:
+                st.info("Nenhuma guia cadastrada para projetar.")
+            else:
+                # Seleciona a guia
+                guia_selecionada = st.selectbox("Escolha a guia:", st.session_state.guias_extras)
+
+                proj_individual = []
+                m_iter = mes_n
+                a_iter = ano_r
+
+                for i in range(6):
+                    nome_mes = lista_meses_nomes[m_iter - 1]
+                    label_mes = f"{nome_mes[:3]}/{str(a_iter)[2:]}"
+                    _, tot_guia_futuro, _ = calc_parc_com_categoria(
+                        st.session_state.get(f"dados_{guia_selecionada}"), m_iter, a_iter
+                    )
+                    proj_individual.append({
+                        "Mês": label_mes,
+                        "Valor (R$)": tot_guia_futuro
+                    })
+                    m_iter += 1
+                    if m_iter > 12:
+                        m_iter = 1
+                        a_iter += 1
+
+                df_ind = pd.DataFrame(proj_individual)
+
+                # Gráfico de linha
+                fig_ind = px.line(
+                    df_ind,
+                    x="Mês",
+                    y="Valor (R$)",
+                    markers=True,
+                    title=f"Projeção – {guia_selecionada}"
+                )
+                fig_ind.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+                st.plotly_chart(fig_ind, use_container_width=True)
+
+                # Tabela simples
+                with st.expander("📋 Ver valores"):
+                    st.dataframe(df_ind.style.format({"Valor (R$)": "R$ {:,.2f}"}), use_container_width=True)
 
     elif sel == "Pesquisa Global":
         st.subheader("🔍 Procurar no Histórico")

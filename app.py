@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import json
 import plotly.express as px
 import time
 from datetime import datetime, timedelta
@@ -11,16 +10,21 @@ import plotly.graph_objects as go
 import PyPDF2
 
 # --- IMPORTAÇÃO DOS NOSSOS MÓDULOS ---
-from modulos.utilidades import formatar_moeda_br, remover_acentos, safe_float, safe_int, safe_str, safe_bool, MESES, CATEGORIAS_PADRAO_BASE
+from modulos.utilidades import (
+    formatar_moeda_br, remover_acentos,
+    safe_float, safe_int, safe_str, safe_bool,
+    MESES, CATEGORIAS_PADRAO_BASE
+)
 from modulos.bd_google import carregar_dados_nuvem_raw, salvar_dados_nuvem
 from modulos.sidebar import renderizar_sidebar
+from modulos.inicializacao import carregar_estado_inicial
 
 # Importações da IA isolada
 from modulos.ia_gemini import (
-    gemini_ok, 
-    analise_financeira_gemini, 
-    sugerir_categoria_gemini, 
-    extrair_dados_recibo_gemini, 
+    gemini_ok,
+    analise_financeira_gemini,
+    sugerir_categoria_gemini,
+    extrair_dados_recibo_gemini,
     extrair_lote_extrato_gemini
 )
 
@@ -30,7 +34,7 @@ def check_password():
         return True
 
     st.title("🔒 Acesso Restrito")
-    
+
     with st.form("login_form"):
         usuario_digitado = st.text_input("Usuário:").strip().lower()
         senha_digitada = st.text_input("Senha:", type="password")
@@ -48,12 +52,15 @@ def check_password():
                     st.error("😕 Senha inválida. Tente novamente.")
             else:
                 st.error("🚫 Usuário não encontrado.")
-                
+
     return False
 
 # --- 2. INÍCIO DO APLICATIVO ---
 if check_password():
-    st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="centered", initial_sidebar_state="expanded")
+    st.set_page_config(
+        page_title="Controle Financeiro", page_icon="💰",
+        layout="centered", initial_sidebar_state="expanded"
+    )
 
     if not gemini_ok:
         st.sidebar.warning("🤖 IA Desativada: Verifique a configuração do Gemini.")
@@ -62,11 +69,11 @@ if check_password():
     def obter_mes_anterior(mes_nome, ano_atual):
         lista = list(MESES.keys())
         idx = lista.index(mes_nome)
-        return (lista[idx-1], ano_atual) if idx>0 else ("Dezembro", ano_atual-1)
+        return (lista[idx - 1], ano_atual) if idx > 0 else ("Dezembro", ano_atual - 1)
 
     def carregar_dados_sessao(importar_do_anterior=False):
         chave_atual = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
-        
+
         if importar_do_anterior:
             m_ant, a_ant = obter_mes_anterior(st.session_state.mes_atual, st.session_state.ano_atual)
             chave_ant = f"{m_ant}_{a_ant}"
@@ -74,8 +81,10 @@ if check_password():
                 df_base = pd.DataFrame(st.session_state.historico_fixos[chave_ant])
                 if not df_base.empty:
                     df_base["Pago"] = False
-                    if "Categoria" not in df_base.columns: df_base["Categoria"] = "Outros"
-                    if "Dia Venc." not in df_base.columns: df_base["Dia Venc."] = 10
+                    if "Categoria" not in df_base.columns:
+                        df_base["Categoria"] = "Outros"
+                    if "Dia Venc." not in df_base.columns:
+                        df_base["Dia Venc."] = 10
                     st.session_state.gastos_fixos = df_base
                     st.success(f"Importado de {m_ant}!")
                 else:
@@ -92,15 +101,19 @@ if check_password():
         if not dados_fixos_atual and chave_ant in st.session_state.historico_fixos:
             df_base = pd.DataFrame(st.session_state.historico_fixos[chave_ant])
             if not df_base.empty:
-                df_base["Pago"] = False # Inicia tudo desmarcado
-                if "Categoria" not in df_base.columns: df_base["Categoria"] = "Outros"
-                if "Dia Venc." not in df_base.columns: df_base["Dia Venc."] = 10
+                df_base["Pago"] = False
+                if "Categoria" not in df_base.columns:
+                    df_base["Categoria"] = "Outros"
+                if "Dia Venc." not in df_base.columns:
+                    df_base["Dia Venc."] = 10
                 st.session_state.gastos_fixos = df_base
                 st.session_state.historico_fixos[chave_atual] = df_base.to_dict("records")
         else:
             st.session_state.gastos_fixos = pd.DataFrame(dados_fixos_atual)
             if st.session_state.gastos_fixos.empty:
-                st.session_state.gastos_fixos = pd.DataFrame(columns=["Descrição","Valor (R$)","Pago","Categoria", "Dia Venc."])
+                st.session_state.gastos_fixos = pd.DataFrame(
+                    columns=["Descrição", "Valor (R$)", "Pago", "Categoria", "Dia Venc."]
+                )
             else:
                 if "Categoria" not in st.session_state.gastos_fixos.columns:
                     st.session_state.gastos_fixos["Categoria"] = "Outros"
@@ -110,31 +123,41 @@ if check_password():
         df_c = pd.DataFrame(st.session_state.historico_casuais.get(chave_atual, []))
         if not df_c.empty:
             df_c["Data"] = pd.to_datetime(df_c["Data"]).dt.date
-        st.session_state.gastos_casuais = df_c if not df_c.empty else pd.DataFrame(columns=["Data","Categoria","Descrição","Valor (R$)"])
+        st.session_state.gastos_casuais = (
+            df_c if not df_c.empty
+            else pd.DataFrame(columns=["Data", "Categoria", "Descrição", "Valor (R$)"])
+        )
 
         renda_data = st.session_state.renda_por_mes.get(chave_atual)
         if renda_data:
             st.session_state.renda_detalhada = pd.DataFrame(renda_data)
         else:
-            st.session_state.renda_detalhada = pd.DataFrame([{"Fonte":"Salário","Valor (R$)":0.0}])
+            st.session_state.renda_detalhada = pd.DataFrame(
+                [{"Fonte": "Salário", "Valor (R$)": 0.0}]
+            )
 
     def calc_parc_com_categoria(df, m, a):
         parcelas = []
         if df is None or df.empty:
-            return pd.DataFrame(columns=["Descrição","Categoria","Valor (R$)"]), 0.0, {}
-        df_valid = df.dropna(subset=["Descrição","Valor Parcela (R$)"])
-        for _, r in df_valid[df_valid["Descrição"]!=""].iterrows():
+            return pd.DataFrame(columns=["Descrição", "Categoria", "Valor (R$)"]), 0.0, {}
+        df_valid = df.dropna(subset=["Descrição", "Valor Parcela (R$)"])
+        for _, r in df_valid[df_valid["Descrição"] != ""].iterrows():
             try:
                 m_i = safe_int(r["Mês Início (1-12)"])
                 a_i = safe_int(r["Ano Início"])
                 qtd = safe_int(r["Qtd Parcelas"])
                 v = safe_float(r["Valor Parcela (R$)"])
-                alvo = a*12 + m
-                ini = a_i*12 + m_i
-                if ini <= alvo <= (ini+qtd-1):
-                    categoria = r.get("Categoria","Outros")
-                    parcelas.append({"Descrição":r["Descrição"],"Categoria":categoria,"Valor (R$)":v})
-            except: continue
+                alvo = a * 12 + m
+                ini = a_i * 12 + m_i
+                if ini <= alvo <= (ini + qtd - 1):
+                    categoria = r.get("Categoria", "Outros")
+                    parcelas.append({
+                        "Descrição": r["Descrição"],
+                        "Categoria": categoria,
+                        "Valor (R$)": v
+                    })
+            except:
+                continue
         df_parc = pd.DataFrame(parcelas)
         total = df_parc["Valor (R$)"].sum() if not df_parc.empty else 0.0
         soma_cat = df_parc.groupby("Categoria")["Valor (R$)"].sum().to_dict() if not df_parc.empty else {}
@@ -144,24 +167,27 @@ if check_password():
     def formatar_moeda_pdf(valor):
         return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-    def gerar_pdf_mes(mes_nome, ano, renda_df, fixos_df, casuais_df, guias_dados, total_renda, t_fix, t_cas, t_gui, sobra, dados_categoria):
+    def gerar_pdf_mes(mes_nome, ano, renda_df, fixos_df, casuais_df,
+                      guias_dados, total_renda, t_fix, t_cas, t_gui,
+                      sobra, dados_categoria):
         pdf = FPDF()
         pdf.add_page()
         COR_TOPO = (46, 125, 50)
         COR_TITULO_SECAO = (225, 225, 225)
         COR_LINHA_DIVISORIA = (220, 220, 220)
-        
+
         pdf.set_font('helvetica', 'B', 16)
         pdf.set_fill_color(*COR_TOPO)
         pdf.set_text_color(255, 255, 255)
-        pdf.cell(0, 12, remover_acentos(f"EXTRATO FINANCEIRO - {mes_nome.upper()} {ano}"), ln=True, align="C", fill=True)
+        pdf.cell(0, 12, remover_acentos(f"EXTRATO FINANCEIRO - {mes_nome.upper()} {ano}"),
+                 ln=True, align="C", fill=True)
         pdf.ln(4)
         pdf.set_text_color(0, 0, 0)
-        
+
         def imprimir_secao(titulo, total, df, tipo="padrao"):
             pdf.set_font('helvetica', 'B', 11)
             pdf.set_fill_color(*COR_TITULO_SECAO)
-            pdf.set_draw_color(120, 120, 120) 
+            pdf.set_draw_color(120, 120, 120)
             pdf.cell(140, 8, remover_acentos(f"  {titulo}"), border='TB', fill=True)
             pdf.cell(50, 8, formatar_moeda_pdf(total), border='TB', ln=True, align="R", fill=True)
             pdf.set_draw_color(*COR_LINHA_DIVISORIA)
@@ -171,14 +197,16 @@ if check_password():
                 pdf.ln(3)
                 return
             for _, row in df.iterrows():
-                if tipo == "renda": texto_esq = f"  {row['Fonte']}"
+                if tipo == "renda":
+                    texto_esq = f"  {row['Fonte']}"
                 elif tipo == "fixos":
                     status = "(Pago)" if row.get("Pago", False) else "(Pendente)"
                     texto_esq = f"  {row.get('Descrição', '')} [{row.get('Categoria', '')}] {status}"
                 elif tipo == "casuais":
-                    d_str = row['Data'].strftime("%d/%m") if hasattr(row['Data'],'strftime') else str(row['Data'])[:5]
+                    d_str = row['Data'].strftime("%d/%m") if hasattr(row['Data'], 'strftime') else str(row['Data'])[:5]
                     texto_esq = f"  {d_str} | {row.get('Categoria', '')} - {row.get('Descrição', '')}"
-                if len(texto_esq) > 85: texto_esq = texto_esq[:82] + "..."
+                if len(texto_esq) > 85:
+                    texto_esq = texto_esq[:82] + "..."
                 pdf.cell(140, 6, remover_acentos(texto_esq), border='B')
                 pdf.cell(50, 6, formatar_moeda_pdf(row['Valor (R$)']), border='B', ln=True, align="R")
             pdf.ln(4)
@@ -186,37 +214,35 @@ if check_password():
         imprimir_secao("Renda Mensal", total_renda, renda_df, "renda")
         imprimir_secao("Despesas Fixas", t_fix, fixos_df, "fixos")
         imprimir_secao("Despesas do Dia a Dia", t_cas, casuais_df, "casuais")
-        
+
         pdf.set_font('helvetica', 'B', 11)
         pdf.set_fill_color(*COR_TITULO_SECAO)
         pdf.set_draw_color(120, 120, 120)
         pdf.cell(140, 8, remover_acentos("  Guias (Cartões e Parcelamentos)"), border='TB', fill=True)
         pdf.cell(50, 8, formatar_moeda_pdf(t_gui), border='TB', ln=True, align="R", fill=True)
         pdf.set_draw_color(*COR_LINHA_DIVISORIA)
-        
+
         if not guias_dados:
             pdf.set_font('helvetica', '', 9)
             pdf.cell(190, 6, "  Nenhuma guia extra.", border='B', ln=True)
         else:
             for guia, parcelas in guias_dados.items():
-                if not parcelas: continue
-                
+                if not parcelas:
+                    continue
                 total_fatura = sum(row['Valor (R$)'] for row in parcelas)
-                
                 pdf.set_font('helvetica', 'B', 9)
                 pdf.set_fill_color(245, 245, 245)
-                
                 pdf.cell(140, 6, remover_acentos(f"    Fatura: {guia}"), border='B', fill=True)
                 pdf.cell(50, 6, formatar_moeda_pdf(total_fatura), border='B', ln=True, align="R", fill=True)
-                
                 pdf.set_font('helvetica', '', 9)
                 for row in parcelas:
                     linha_texto = f"        - {row['Descrição']} ({row['Categoria']})"
-                    if len(linha_texto) > 75: linha_texto = linha_texto[:72] + "..."
+                    if len(linha_texto) > 75:
+                        linha_texto = linha_texto[:72] + "..."
                     pdf.cell(140, 6, remover_acentos(linha_texto), border='B')
                     pdf.cell(50, 6, formatar_moeda_pdf(row['Valor (R$)']), border='B', ln=True, align="R")
         pdf.ln(4)
-        
+
         pdf.set_font('helvetica', 'B', 11)
         pdf.set_fill_color(*COR_TITULO_SECAO)
         pdf.set_draw_color(120, 120, 120)
@@ -228,7 +254,7 @@ if check_password():
             pdf.cell(140, 6, remover_acentos(f"  {cat}"), border='B')
             pdf.cell(50, 6, formatar_moeda_pdf(valor), border='B', ln=True, align="R")
         pdf.ln(6)
-        
+
         pdf.set_font('helvetica', 'B', 12)
         if sobra >= 0:
             pdf.set_fill_color(220, 255, 220); pdf.set_text_color(0, 100, 0); pdf.set_draw_color(0, 150, 0)
@@ -236,86 +262,41 @@ if check_password():
             pdf.set_fill_color(255, 220, 220); pdf.set_text_color(150, 0, 0); pdf.set_draw_color(200, 0, 0)
         pdf.cell(140, 10, remover_acentos("  SALDO LÍQUIDO DO MÊS:"), border=1, fill=True)
         pdf.cell(50, 10, formatar_moeda_pdf(sobra), border=1, ln=True, align="R", fill=True)
-        pdf.set_text_color(0,0,0)
-        
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp: temp_path = tmp.name
+        pdf.set_text_color(0, 0, 0)
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            temp_path = tmp.name
         pdf.output(temp_path)
-        with open(temp_path, "rb") as f: pdf_data = f.read()
+        with open(temp_path, "rb") as f:
+            pdf_data = f.read()
         os.remove(temp_path)
         return pdf_data
-    
-    # --- INICIALIZAÇÃO ---
-    if "dados_carregados" not in st.session_state:
-        with st.spinner("Carregando dados da nuvem..."):
-            dados_raw, _ = carregar_dados_nuvem_raw()
-        hj = datetime.now()
-        st.session_state.ano_atual = hj.year
-        st.session_state.mes_atual = list(MESES.keys())[hj.month-1]
 
-        st.session_state.historico_casuais = dados_raw.get("historico_casuais", {})
-        st.session_state.historico_fixos = dados_raw.get("historico_fixos", {})
-        st.session_state.guias_extras = dados_raw.get("guias_extras", [])
-        st.session_state.categorias_personalizadas = dados_raw.get("categorias_personalizadas", [])
-        st.session_state.categorias_padrao = dados_raw.get("categorias_padrao", CATEGORIAS_PADRAO_BASE.copy())
-        st.session_state.renda_por_mes = dados_raw.get("renda_por_mes", {})
-        st.session_state.metas_orcamento = dados_raw.get("metas_orcamento", {})
-        st.session_state.pagamento_guias = dados_raw.get("pagamento_guias", {})
+    # --- INICIALIZAÇÃO (MOVIDA PARA MÓDULO) ---
+    carregar_estado_inicial(carregar_dados_sessao)
 
-        if len(st.session_state.categorias_padrao) != len(CATEGORIAS_PADRAO_BASE):
-            st.session_state.categorias_padrao = CATEGORIAS_PADRAO_BASE.copy()
-
-        colunas_guia = ["Descrição", "Valor Parcela (R$)", "Data da Compra", "Mês Início (1-12)", "Ano Início", "Qtd Parcelas", "Categoria"]
-        for g in st.session_state.guias_extras:
-            dados_g = dados_raw.get(f"dados_{g}", [])
-            if dados_g:
-                df = pd.DataFrame(dados_g)
-                for col in colunas_guia:
-                    if col not in df.columns:
-                        if col == "Data da Compra":
-                            df[col] = None
-                        else:
-                            df[col] = None
-                if "Data da Compra" in df.columns:
-                    df["Data da Compra"] = pd.to_datetime(df["Data da Compra"], errors='coerce')
-                    df["Data da Compra"] = df["Data da Compra"].apply(lambda x: x.date() if isinstance(x, datetime) and not pd.isna(x) else None)
-                st.session_state[f"dados_{g}"] = df
-            else:
-                st.session_state[f"dados_{g}"] = pd.DataFrame(columns=colunas_guia)
-                
-        if st.session_state.pagamento_guias and not isinstance(list(st.session_state.pagamento_guias.values())[0], dict):
-            st.session_state.pagamento_guias = {} 
-
-        dados_inv = dados_raw.get("historico_investimentos", [])
-        if dados_inv:
-            df_inv = pd.DataFrame(dados_inv)
-            df_inv["Data"] = pd.to_datetime(df_inv["Data"], errors='coerce').dt.date
-            st.session_state.dados_investimentos = df_inv
-        else:
-            st.session_state.dados_investimentos = pd.DataFrame(columns=["Data", "Ativo", "Classe", "Tipo", "Valor (R$)", "Descrição"])
-
-        carregar_dados_sessao()
-        st.session_state.dados_carregados = True
-
-    if "pdf_ready" not in st.session_state: st.session_state.pdf_ready = False
-    if "pdf_data" not in st.session_state: st.session_state.pdf_data = None
+    if "pdf_ready" not in st.session_state:
+        st.session_state.pdf_ready = False
+    if "pdf_data" not in st.session_state:
+        st.session_state.pdf_data = None
 
     def get_categorias():
         return st.session_state.categorias_padrao + st.session_state.categorias_personalizadas
 
-    # --- SIDEBAR (agora em módulo separado) ---
+    # --- SIDEBAR (em módulo separado) ---
     sel = renderizar_sidebar(
         get_categorias_fn=get_categorias,
         carregar_dados_sessao_fn=carregar_dados_sessao,
         gerar_pdf_mes_fn=gerar_pdf_mes,
         calc_parc_com_categoria_fn=calc_parc_com_categoria
     )
-            
+
     # --- CÁLCULOS PRINCIPAIS ---
     mes_n = MESES[st.session_state.mes_atual]
     ano_r = st.session_state.ano_atual
     t_fix = st.session_state.gastos_fixos["Valor (R$)"].sum() if not st.session_state.gastos_fixos.empty else 0.0
     t_cas = st.session_state.gastos_casuais["Valor (R$)"].sum() if not st.session_state.gastos_casuais.empty else 0.0
-    
+
     total_guias = 0.0
     gastos_categoria = {}
     for _, row in st.session_state.gastos_fixos.iterrows():
@@ -324,9 +305,11 @@ if check_password():
     for _, row in st.session_state.gastos_casuais.iterrows():
         cat = row["Categoria"]
         gastos_categoria[cat] = gastos_categoria.get(cat, 0.0) + row["Valor (R$)"]
-    
+
     for guia in st.session_state.guias_extras:
-        _, tot_guia, cats_guia = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
+        _, tot_guia, cats_guia = calc_parc_com_categoria(
+            st.session_state.get(f"dados_{guia}"), mes_n, ano_r
+        )
         total_guias += tot_guia
         for cat, val in cats_guia.items():
             gastos_categoria[cat] = gastos_categoria.get(cat, 0.0) + val
@@ -334,91 +317,94 @@ if check_password():
     total_renda = st.session_state.renda_detalhada["Valor (R$)"].sum()
     sobra = total_renda - (t_fix + t_cas + total_guias)
 
-    st.markdown(f"<h2>Painel de Controle • {st.session_state.mes_atual} {st.session_state.ano_atual}</h2>", unsafe_allow_html=True)
+    st.markdown(
+        f"<h2>Painel de Controle • {st.session_state.mes_atual} {st.session_state.ano_atual}</h2>",
+        unsafe_allow_html=True
+    )
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ========== SEÇÕES ==========
     if sel == "Resumo Geral":
         gt = t_fix + t_cas + total_guias
-        
-        # --- CÁLCULO DO MÊS ANTERIOR PARA COMPARAÇÃO ---
+
         m_ant, a_ant = obter_mes_anterior(st.session_state.mes_atual, st.session_state.ano_atual)
         chave_ant = f"{m_ant}_{a_ant}"
-        
+
         df_fix_ant = pd.DataFrame(st.session_state.historico_fixos.get(chave_ant, []))
         t_fix_ant = df_fix_ant['Valor (R$)'].sum() if not df_fix_ant.empty and 'Valor (R$)' in df_fix_ant.columns else 0.0
-        
+
         df_cas_ant = pd.DataFrame(st.session_state.historico_casuais.get(chave_ant, []))
         t_cas_ant = df_cas_ant['Valor (R$)'].sum() if not df_cas_ant.empty and 'Valor (R$)' in df_cas_ant.columns else 0.0
-        
+
         t_guias_ant = 0.0
         for g in st.session_state.guias_extras:
-            _, tot_g_ant, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{g}"), MESES[m_ant], a_ant)
+            _, tot_g_ant, _ = calc_parc_com_categoria(
+                st.session_state.get(f"dados_{g}"), MESES[m_ant], a_ant
+            )
             t_guias_ant += tot_g_ant
-            
+
         gt_ant = t_fix_ant + t_cas_ant + t_guias_ant
-        
+
         df_ren_ant = pd.DataFrame(st.session_state.renda_por_mes.get(chave_ant, []))
         t_renda_ant = df_ren_ant['Valor (R$)'].sum() if not df_ren_ant.empty and 'Valor (R$)' in df_ren_ant.columns else 0.0
         sobra_ant = t_renda_ant - gt_ant
 
-        # --- CARDS COM VARIAÇÃO PERCENTUAL ---
         c1, c2, c3 = st.columns(3)
         with c1:
             dif_gasto = gt - gt_ant
-            st.metric("GASTO TOTAL", formatar_moeda_br(gt), delta=f"{dif_gasto:,.2f} vs Mês Ant.", delta_color="inverse", help="O vermelho indica que você gastou mais que o mês passado.")
+            st.metric("GASTO TOTAL", formatar_moeda_br(gt),
+                      delta=f"{dif_gasto:,.2f} vs Mês Ant.", delta_color="inverse")
         with c2:
             dif_sobra = sobra - sobra_ant
-            st.metric("SOBRA REAL", formatar_moeda_br(sobra), delta=f"{dif_sobra:,.2f} vs Mês Ant.", help="Verde indica que sobrou mais dinheiro.")
+            st.metric("SOBRA REAL", formatar_moeda_br(sobra),
+                      delta=f"{dif_sobra:,.2f} vs Mês Ant.")
         with c3:
             dif_renda = total_renda - t_renda_ant
-            st.metric("RENDA TOTAL", formatar_moeda_br(total_renda), delta=f"{dif_renda:,.2f} vs Mês Ant.")
-        
-        # --- ALERTA DE VENCIMENTO DE CONTAS ---
+            st.metric("RENDA TOTAL", formatar_moeda_br(total_renda),
+                      delta=f"{dif_renda:,.2f} vs Mês Ant.")
+
         hoje = datetime.now()
         if hoje.month == mes_n and hoje.year == ano_r:
             if "Dia Venc." in st.session_state.gastos_fixos.columns:
                 df_pendentes = st.session_state.gastos_fixos[st.session_state.gastos_fixos['Pago'] == False]
                 contas_vencendo = df_pendentes[pd.to_numeric(df_pendentes['Dia Venc.'], errors='coerce') <= (hoje.day + 3)]
-                
                 if not contas_vencendo.empty:
                     with st.error("⚠️ Atenção: Contas fixas vencendo em breve ou em atraso!"):
                         for _, row in contas_vencendo.iterrows():
                             st.write(f"- **{row['Descrição']}**: {formatar_moeda_br(row['Valor (R$)'])} (Vence dia {int(row['Dia Venc.'])})")
 
-        # Aviso de guias não marcadas como pagas (apenas lembrete)
         chave_atual = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
         if chave_atual not in st.session_state.pagamento_guias:
             st.session_state.pagamento_guias[chave_atual] = {}
-            
-        guias_nao_marcadas = [g for g in st.session_state.guias_extras if not st.session_state.pagamento_guias[chave_atual].get(g, False)]
+
+        guias_nao_marcadas = [
+            g for g in st.session_state.guias_extras
+            if not st.session_state.pagamento_guias[chave_atual].get(g, False)
+        ]
         if guias_nao_marcadas:
             with st.expander("⚠️ Guias com pagamento pendente (lembrete)", expanded=False):
                 for guia in guias_nao_marcadas:
-                    df_parc, tot_parc, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
+                    df_parc, tot_parc, _ = calc_parc_com_categoria(
+                        st.session_state.get(f"dados_{guia}"), mes_n, ano_r
+                    )
                     st.markdown(f"- **{guia}**: {formatar_moeda_br(tot_parc)} neste mês")
-                st.caption("Marque a guia como paga na seção 'Cartões e Guias' apenas para controle – não afeta os cálculos.")
-        
+                st.caption("Marque a guia como paga em 'Cartões e Guias' – não afeta os cálculos.")
+
         st.markdown("<br>", unsafe_allow_html=True)
-        
-        # --- DIAGRAMA DE SANKEY ---
+
         st.markdown("#### Fluxo do Dinheiro (Sankey)")
-        
-        # Mapear os índices dos nós
         labels_sankey = ["Renda", "Sobra", "Fixos", "Dia a Dia", "Guias"] + get_categorias()
-        cat_offset = 5 # As categorias começam no índice 5
-        
-        source = []
-        target = []
-        value = []
-        
-        # 1º Nível: Renda -> Sobra e Tipos de Despesa
-        if sobra > 0: source.append(0); target.append(1); value.append(sobra)
-        if t_fix > 0: source.append(0); target.append(2); value.append(t_fix)
-        if t_cas > 0: source.append(0); target.append(3); value.append(t_cas)
-        if total_guias > 0: source.append(0); target.append(4); value.append(total_guias)
-        
-        # 2º Nível: Tipos de Despesa -> Categorias
+        source, target, value = [], [], []
+
+        if sobra > 0:
+            source.append(0); target.append(1); value.append(sobra)
+        if t_fix > 0:
+            source.append(0); target.append(2); value.append(t_fix)
+        if t_cas > 0:
+            source.append(0); target.append(3); value.append(t_cas)
+        if total_guias > 0:
+            source.append(0); target.append(4); value.append(total_guias)
+
         def add_sankey_links(df_gastos, source_idx):
             if df_gastos is not None and not df_gastos.empty:
                 for cat, group in df_gastos.groupby("Categoria"):
@@ -428,31 +414,35 @@ if check_password():
                         target.append(labels_sankey.index(cat))
                         value.append(val)
 
-        # Fixos
         add_sankey_links(st.session_state.gastos_fixos, 2)
-        # Casuais
         add_sankey_links(st.session_state.gastos_casuais, 3)
-        # Guias (precisamos juntar todas as parcelas deste mês)
         df_todas_guias_mes = pd.DataFrame()
         for guia in st.session_state.guias_extras:
-            df_parc, _, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
-            if not df_parc.empty: df_todas_guias_mes = pd.concat([df_todas_guias_mes, df_parc])
+            df_parc, _, _ = calc_parc_com_categoria(
+                st.session_state.get(f"dados_{guia}"), mes_n, ano_r
+            )
+            if not df_parc.empty:
+                df_todas_guias_mes = pd.concat([df_todas_guias_mes, df_parc])
         add_sankey_links(df_todas_guias_mes, 4)
 
         if sum(value) > 0:
             fig_sankey = go.Figure(data=[go.Sankey(
-                node = dict(pad=15, thickness=20, line=dict(color="black", width=0.5), label=labels_sankey),
-                link = dict(source=source, target=target, value=value)
+                node=dict(pad=15, thickness=20, line=dict(color="black", width=0.5), label=labels_sankey),
+                link=dict(source=source, target=target, value=value)
             )])
             fig_sankey.update_layout(height=400, margin=dict(t=10, b=10, l=10, r=10), paper_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_sankey, use_container_width=True)
         else:
             st.info("Adicione renda e gastos para visualizar o fluxo do dinheiro.")
-            
+
         st.markdown("---")
         st.markdown("#### Evolução Anual")
         historico_df_dados = []
-        chaves_todas = set(list(st.session_state.historico_fixos.keys()) + list(st.session_state.historico_casuais.keys()) + list(st.session_state.renda_por_mes.keys()))
+        chaves_todas = set(
+            list(st.session_state.historico_fixos.keys()) +
+            list(st.session_state.historico_casuais.keys()) +
+            list(st.session_state.renda_por_mes.keys())
+        )
         if chaves_todas:
             for chave in chaves_todas:
                 try:
@@ -465,7 +455,9 @@ if check_password():
                     tot_c = df_cas['Valor (R$)'].sum() if not df_cas.empty and 'Valor (R$)' in df_cas.columns else 0.0
                     tot_g = 0.0
                     for g in st.session_state.guias_extras:
-                        _, t_g, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{g}"), mes_idx, ano_num)
+                        _, t_g, _ = calc_parc_com_categoria(
+                            st.session_state.get(f"dados_{g}"), mes_idx, ano_num
+                        )
                         tot_g += t_g
                     df_ren = pd.DataFrame(st.session_state.renda_por_mes.get(chave, []))
                     tot_r = df_ren['Valor (R$)'].sum() if not df_ren.empty and 'Valor (R$)' in df_ren.columns else 0.0
@@ -473,28 +465,22 @@ if check_password():
                     historico_df_dados.append({
                         "Data_Sort": datetime(ano_num, mes_idx, 1),
                         "Mês": f"{mes_str[:3]}/{str(ano_str)[2:]}",
-                        "Renda": tot_r,
-                        "Despesas": tot_d,
-                        "Sobra": tot_r - tot_d
+                        "Renda": tot_r, "Despesas": tot_d, "Sobra": tot_r - tot_d
                     })
-                except: continue
+                except:
+                    continue
             if historico_df_dados:
                 df_hist = pd.DataFrame(historico_df_dados).sort_values("Data_Sort")
                 fig_hist = px.line(
-                    df_hist, 
-                    x="Mês", 
-                    y=["Renda", "Despesas", "Sobra"], 
+                    df_hist, x="Mês", y=["Renda", "Despesas", "Sobra"],
                     color_discrete_sequence=['#4D96FF', '#FF6B6B', '#6BCB77'],
-                    markers=True 
+                    markers=True
                 )
                 fig_hist.update_layout(
-                    plot_bgcolor="rgba(0,0,0,0)", 
-                    paper_bgcolor="rgba(0,0,0,0)", 
-                    margin=dict(t=10,b=10,l=0,r=0), 
-                    height=250, 
-                    xaxis=dict(showgrid=False), 
-                    yaxis=dict(showgrid=False),
-                    legend_title_text="Legenda" 
+                    plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+                    margin=dict(t=10, b=10, l=0, r=0), height=250,
+                    xaxis=dict(showgrid=False), yaxis=dict(showgrid=False),
+                    legend_title_text="Legenda"
                 )
                 st.plotly_chart(fig_hist, use_container_width=True)
 

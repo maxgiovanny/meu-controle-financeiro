@@ -1051,8 +1051,6 @@ if check_password():
                 st.caption("Marque a guia como paga na seção 'Cartões e Guias' apenas para controle – não afeta os cálculos.")
         
         st.markdown("<br>", unsafe_allow_html=True)
-
-      col_graf1 = st.columns([1])
       
 # --- DIAGRAMA DE SANKEY ---
         st.markdown("#### Fluxo do Dinheiro (Sankey)")

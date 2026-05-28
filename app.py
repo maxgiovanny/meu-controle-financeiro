@@ -1308,59 +1308,6 @@ if check_password():
                     if st.button("❌ Cancelar"):
                         del st.session_state["recibo_pendente"]
                         st.rerun()
-                        
-        with st.expander("📥 Importar Extrato em Lote (PDF ou CSV) via IA", expanded=False):
-            arquivo_extrato = st.file_uploader("Envie seu extrato bancário", type=["pdf", "csv"])
-            
-            if arquivo_extrato is not None:
-                if st.button("🪄 Processar Extrato"):
-                    with st.spinner("A IA está lendo o extrato e categorizando os gastos (isso pode levar alguns segundos)..."):
-                        texto_completo = ""
-                        # Se for PDF, extrai texto com PyPDF2
-                        if arquivo_extrato.name.endswith('.pdf'):
-                            leitor = PyPDF2.PdfReader(arquivo_extrato)
-                            for pagina in leitor.pages:
-                                texto_completo += pagina.extract_text() + "\n"
-                        # Se for CSV, lê como string
-                        elif arquivo_extrato.name.endswith('.csv'):
-                            texto_completo = arquivo_extrato.getvalue().decode("utf-8")
-                            
-                        dados_lote = extrair_lote_extrato_gemini(texto_completo)
-                        
-                        if dados_lote and isinstance(dados_lote, list):
-                            st.session_state["lote_pendente"] = pd.DataFrame(dados_lote)
-                            st.success(f"{len(dados_lote)} despesas encontradas!")
-                        else:
-                            st.error("Não foi possível extrair dados estruturados deste arquivo.")
-            
-            if "lote_pendente" in st.session_state:
-                st.info("Revise os dados importados. Você pode editar as células antes de salvar.")
-                df_lote = st.session_state["lote_pendente"]
-                df_lote['Data'] = pd.to_datetime(df_lote['Data'], errors='coerce').dt.date
-                
-                df_editado = st.data_editor(
-                    df_lote,
-                    num_rows="dynamic",
-                    column_config={
-                        "Data": st.column_config.DateColumn(format="DD/MM/YYYY"),
-                        "Categoria": st.column_config.SelectboxColumn(options=get_categorias()),
-                        "Valor (R$)": st.column_config.NumberColumn(format="R$ %.2f", min_value=0)
-                    },
-                    use_container_width=True
-                )
-                
-                col_sl, col_cl = st.columns(2)
-                with col_sl:
-                    if st.button("✅ Confirmar e Salvar Tudo"):
-                        st.session_state.gastos_casuais = pd.concat([st.session_state.gastos_casuais, df_editado], ignore_index=True)
-                        salvar_dados_nuvem()
-                        del st.session_state["lote_pendente"]
-                        st.success("Lote salvo com sucesso!")
-                        st.rerun()
-                with col_cl:
-                    if st.button("❌ Cancelar Importação"):
-                        del st.session_state["lote_pendente"]
-                        st.rerun()
         st.divider()
 
         ec = st.data_editor(
@@ -1673,6 +1620,72 @@ if check_password():
                             st.rerun()
                         else:
                             st.warning("Preencha a descrição.")
+                            
+# --- NOVO LOCAL DA IMPORTAÇÃO DE FATURA ---
+            with st.expander(f"📥 Importar Fatura (PDF ou CSV) para {guia_ativa}", expanded=False):
+                arquivo_extrato = st.file_uploader("Envie a fatura deste cartão", type=["pdf", "csv"], key=f"up_{guia_ativa}")
+                
+                if arquivo_extrato is not None:
+                    if st.button("🪄 Processar Fatura"):
+                        with st.spinner("A IA está a ler a fatura e a categorizar os gastos..."):
+                            texto_completo = ""
+                            if arquivo_extrato.name.endswith('.pdf'):
+                                leitor = PyPDF2.PdfReader(arquivo_extrato)
+                                for pagina in leitor.pages:
+                                    texto_completo += pagina.extract_text() + "\n"
+                            elif arquivo_extrato.name.endswith('.csv'):
+                                texto_completo = arquivo_extrato.getvalue().decode("utf-8")
+                                
+                            dados_lote = extrair_lote_extrato_gemini(texto_completo)
+                            
+                            if dados_lote and isinstance(dados_lote, list):
+                                st.session_state["fatura_pendente"] = pd.DataFrame(dados_lote)
+                                st.success(f"{len(dados_lote)} despesas encontradas!")
+                            else:
+                                st.error("Não foi possível extrair dados estruturados desta fatura.")
+                
+                if "fatura_pendente" in st.session_state:
+                    st.info("Reveja os dados importados. Pode editar as células antes de confirmar.")
+                    df_lote = st.session_state["fatura_pendente"]
+                    df_lote['Data'] = pd.to_datetime(df_lote['Data'], errors='coerce').dt.date
+                    
+                    df_editado = st.data_editor(
+                        df_lote,
+                        num_rows="dynamic",
+                        column_config={
+                            "Data": st.column_config.DateColumn("Data da Compra", format="DD/MM/YYYY"),
+                            "Categoria": st.column_config.SelectboxColumn(options=get_categorias()),
+                            "Valor (R$)": st.column_config.NumberColumn(format="R$ %.2f", min_value=0)
+                        },
+                        use_container_width=True,
+                        key=f"editor_lote_{guia_ativa}"
+                    )
+                    
+                    col_sl, col_cl = st.columns(2)
+                    with col_sl:
+                        if st.button("✅ Guardar no Cartão"):
+                            # Transformar os dados lidos para o formato da Tabela de Guias
+                            novas_linhas = []
+                            for _, row in df_editado.iterrows():
+                                novas_linhas.append({
+                                    "Descrição": row.get("Descrição", ""),
+                                    "Valor Parcela (R$)": row.get("Valor (R$)", 0.0),
+                                    "Data da Compra": row.get("Data"),
+                                    "Mês Início (1-12)": mes_n,
+                                    "Ano Início": ano_r,
+                                    "Qtd Parcelas": 1, # Assume como compra à vista (1 parcela) por defeito
+                                    "Categoria": row.get("Categoria", "Outros")
+                                })
+                            
+                            st.session_state[f"dados_{guia_ativa}"] = pd.concat([df_guia, pd.DataFrame(novas_linhas)], ignore_index=True)
+                            salvar_dados_nuvem()
+                            del st.session_state["fatura_pendente"]
+                            st.success("Fatura importada com sucesso!")
+                            st.rerun()
+                    with col_cl:
+                        if st.button("❌ Cancelar Importação"):
+                            del st.session_state["fatura_pendente"]
+                            st.rerun()
             
             # Tabela de edição dentro de um expander
             with st.expander("📝 Editar todas as despesas"):

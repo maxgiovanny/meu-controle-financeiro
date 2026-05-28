@@ -7,3 +7,4 @@ fpdf
 google-genai
 pillow
 PyPDF2==3.0.1
+pip install pytest

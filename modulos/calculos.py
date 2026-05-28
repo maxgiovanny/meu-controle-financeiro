@@ -3,6 +3,10 @@ import pandas as pd
 from modulos.utilidades import safe_int, safe_float, MESES
 
 def obter_mes_anterior(mes_nome, ano_atual):
+    """
+    Retorna (nome_mês_anterior, ano) dado o mês/ano atuais.
+    Exemplo: ('Janeiro', 2025) -> ('Dezembro', 2024).
+    """
     lista = list(MESES.keys())
     idx = lista.index(mes_nome)
     return (lista[idx - 1], ano_atual) if idx > 0 else ("Dezembro", ano_atual - 1)

@@ -12,6 +12,8 @@ from fpdf import FPDF
 import unicodedata
 import tempfile
 import os
+import plotly.graph_objects as go
+import PyPDF2
 
 # --- TENTAR IMPORTAR GEMINI (Nova SDK) ---
 try:
@@ -1050,16 +1052,57 @@ if check_password():
         
         st.markdown("<br>", unsafe_allow_html=True)
 
-        col_graf1, col_graf2 = st.columns([1, 2])
-        with col_graf1:
-            st.markdown("#### Divisão de Despesas")
-            df_pizza = pd.DataFrame({"C":["Fixos","Dia a Dia","Guias","Sobra"],"V":[t_fix,t_cas,total_guias,max(0,sobra)]})
-            fig = px.pie(df_pizza, values='V', names='C', hole=.5, color_discrete_sequence=['#FF6B6B', '#FFD93D', '#6BCB77', '#4D96FF'])
-            fig.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", margin=dict(t=10,b=10,l=0,r=0), height=250, showlegend=False)
-            fig.update_traces(textposition='inside', textinfo='percent+label')
-            st.plotly_chart(fig, use_container_width=True)
+      col_graf1 = st.columns([1, 2])
+      
+# --- DIAGRAMA DE SANKEY ---
+        st.markdown("#### Fluxo do Dinheiro (Sankey)")
+        
+        # Mapear os índices dos nós
+        labels_sankey = ["Renda", "Sobra", "Fixos", "Dia a Dia", "Guias"] + get_categorias()
+        cat_offset = 5 # As categorias começam no índice 5
+        
+        source = []
+        target = []
+        value = []
+        
+        # 1º Nível: Renda -> Sobra e Tipos de Despesa
+        if sobra > 0: source.append(0); target.append(1); value.append(sobra)
+        if t_fix > 0: source.append(0); target.append(2); value.append(t_fix)
+        if t_cas > 0: source.append(0); target.append(3); value.append(t_cas)
+        if total_guias > 0: source.append(0); target.append(4); value.append(total_guias)
+        
+        # 2º Nível: Tipos de Despesa -> Categorias
+        def add_sankey_links(df_gastos, source_idx):
+            if df_gastos is not None and not df_gastos.empty:
+                for cat, group in df_gastos.groupby("Categoria"):
+                    val = group["Valor (R$)"].sum()
+                    if val > 0 and cat in labels_sankey:
+                        source.append(source_idx)
+                        target.append(labels_sankey.index(cat))
+                        value.append(val)
 
-        with col_graf2:
+        # Fixos
+        add_sankey_links(st.session_state.gastos_fixos, 2)
+        # Casuais
+        add_sankey_links(st.session_state.gastos_casuais, 3)
+        # Guias (precisamos juntar todas as parcelas deste mês)
+        df_todas_guias_mes = pd.DataFrame()
+        for guia in st.session_state.guias_extras:
+            df_parc, _, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
+            if not df_parc.empty: df_todas_guias_mes = pd.concat([df_todas_guias_mes, df_parc])
+        add_sankey_links(df_todas_guias_mes, 4)
+
+        if sum(value) > 0:
+            fig_sankey = go.Figure(data=[go.Sankey(
+                node = dict(pad=15, thickness=20, line=dict(color="black", width=0.5), label=labels_sankey),
+                link = dict(source=source, target=target, value=value)
+            )])
+            fig_sankey.update_layout(height=400, margin=dict(t=10, b=10, l=10, r=10), paper_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig_sankey, use_container_width=True)
+        else:
+            st.info("Adicione renda e gastos para visualizar o fluxo do dinheiro.")
+            
+        with col_graf1:
             st.markdown("#### Evolução Anual")
             historico_df_dados = []
             chaves_todas = set(list(st.session_state.historico_fixos.keys()) + list(st.session_state.historico_casuais.keys()) + list(st.session_state.renda_por_mes.keys()))

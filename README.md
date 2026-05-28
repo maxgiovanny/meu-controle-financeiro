@@ -23,6 +23,7 @@ Permite registrar rendas, gastos fixos, compras do dia a dia, cartões de crédi
 ---
 
 ## 📁 Estrutura do Projeto
+```bash
 meu-controle-financeiro/
 ├── app.py # Arquivo principal da aplicação
 ├── modulos/
@@ -40,7 +41,7 @@ meu-controle-financeiro/
 │ └── test_calculos.py # Testes das funções de cálculo
 ├── requirements.txt # Dependências do projeto
 └── README.md
-
+```
 
 ---
 

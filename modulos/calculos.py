@@ -13,6 +13,10 @@ def obter_mes_anterior(mes_nome, ano_atual):
 
 @st.cache_data(ttl=3600)
 def calc_parc_com_categoria(df, m, a):
+    """
+    Calcula as parcelas de um DataFrame de guias para um determinado mês (1-12) e ano.
+    Retorna uma tupla: (DataFrame com as parcelas, valor total, dict de totais por categoria).
+    """
     parcelas = []
     if df is None or df.empty:
         return pd.DataFrame(columns=["Descrição", "Categoria", "Valor (R$)"]), 0.0, {}

@@ -10,16 +10,18 @@ import os
 import plotly.graph_objects as go
 import PyPDF2
 
-# --- TENTAR IMPORTAR GEMINI (Nova SDK) ---
-try:
-    from google import genai
-    GEMINI_DISPONIVEL = True
-except ImportError:
-    GEMINI_DISPONIVEL = False
-
 # --- IMPORTAÇÃO DOS NOSSOS MÓDULOS ---
 from modulos.utilidades import formatar_moeda_br, remover_acentos, safe_float, safe_int, safe_str, safe_bool, MESES, CATEGORIAS_PADRAO_BASE
 from modulos.bd_google import carregar_dados_nuvem_raw, salvar_dados_nuvem
+
+# Importações da IA isolada
+from modulos.ia_gemini import (
+    gemini_ok, 
+    analise_financeira_gemini, 
+    sugerir_categoria_gemini, 
+    extrair_dados_recibo_gemini, 
+    extrair_lote_extrato_gemini
+)
 
 # --- 1. FUNÇÃO DE SEGURANÇA (LOGIN MULTI-USUÁRIO) ---
 def check_password():
@@ -52,20 +54,8 @@ def check_password():
 if check_password():
     st.set_page_config(page_title="Controle Financeiro", page_icon="💰", layout="centered", initial_sidebar_state="expanded")
 
-    # --- VERIFICAÇÃO E INICIALIZAÇÃO DO GEMINI ---
-    gemini_ok = False
-    client = None
-
-    if GEMINI_DISPONIVEL and "GEMINI_API_KEY" in st.secrets:
-        try:
-            client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-            gemini_ok = True
-        except Exception as e:
-            st.warning(f"Erro ao inicializar Gemini: {e}")
-    elif not GEMINI_DISPONIVEL:
-        st.warning("Biblioteca 'google-genai' não instalada. IA desativada.")
-    elif "GEMINI_API_KEY" not in st.secrets:
-        st.warning("Chave GEMINI_API_KEY não encontrada nos secrets. IA desativada.")
+    if not gemini_ok:
+        st.sidebar.warning("🤖 IA Desativada: Verifique a configuração do Gemini.")
 
     # --- DEMAIS FUNÇÕES AUXILIARES ---
     def obter_mes_anterior(mes_nome, ano_atual):
@@ -99,14 +89,12 @@ if check_password():
         chave_ant = f"{m_ant}_{a_ant}"
 
         if not dados_fixos_atual and chave_ant in st.session_state.historico_fixos:
-            # Se o mês atual estiver vazio, copia automaticamente do mês anterior
             df_base = pd.DataFrame(st.session_state.historico_fixos[chave_ant])
             if not df_base.empty:
                 df_base["Pago"] = False # Inicia tudo desmarcado
                 if "Categoria" not in df_base.columns: df_base["Categoria"] = "Outros"
                 if "Dia Venc." not in df_base.columns: df_base["Dia Venc."] = 10
                 st.session_state.gastos_fixos = df_base
-                # Salva silenciosamente o auto-preenchimento
                 st.session_state.historico_fixos[chave_atual] = df_base.to_dict("records")
         else:
             st.session_state.gastos_fixos = pd.DataFrame(dados_fixos_atual)
@@ -212,7 +200,6 @@ if check_password():
             for guia, parcelas in guias_dados.items():
                 if not parcelas: continue
                 
-                # Calcula o total parcial desta fatura específica
                 total_fatura = sum(row['Valor (R$)'] for row in parcelas)
                 
                 pdf.set_font('helvetica', 'B', 9)
@@ -255,102 +242,6 @@ if check_password():
         with open(temp_path, "rb") as f: pdf_data = f.read()
         os.remove(temp_path)
         return pdf_data
-
-    # --- FUNÇÕES DE IA (GEMINI) ---
-    @st.cache_data(ttl=3600)
-    def api_analise_gemini(prompt_text):
-        try:
-            resposta = client.models.generate_content(model="gemini-2.5-flash", contents=prompt_text)
-            return resposta.text
-        except Exception as e:
-            if "404" in str(e) or "503" in str(e):
-                resposta = client.models.generate_content(model="gemini-1.5-flash", contents=prompt_text)
-                return resposta.text
-            raise e
-
-    @st.cache_data(ttl=86400)
-    def api_sugestao_gemini(prompt_text):
-        try:
-            resposta = client.models.generate_content(model="gemini-2.5-flash", contents=prompt_text)
-            return resposta.text.strip()
-        except Exception as e:
-            if "404" in str(e) or "503" in str(e):
-                resposta = client.models.generate_content(model="gemini-1.5-flash", contents=prompt_text)
-                return resposta.text.strip()
-            raise e
-
-    def analise_financeira_gemini(renda_total, despesa_total, sobra, gastos_categoria):
-        if not gemini_ok or client is None: return "IA não disponível."
-        top_categorias = sorted(gastos_categoria.items(), key=lambda x: x[1], reverse=True)[:3]
-        texto_categorias = ", ".join([f"{cat} (R$ {val:,.2f})" for cat, val in top_categorias])
-        prompt = f"""
-        Você é um assistente financeiro. Analise os dados do mês:
-        Renda: R$ {renda_total:.2f}
-        Despesas: R$ {despesa_total:.2f}
-        Sobra: R$ {sobra:.2f}
-        Top categorias: {texto_categorias}
-        Forneça um feedback curto (max 80 palavras) e uma dica prática direta.
-        """
-        try:
-            return api_analise_gemini(prompt)
-        except Exception as e:
-            if "429" in str(e) or "quota" in str(e).lower(): return "⚠️ Limite de IA atingido. Tente depois."
-            if "503" in str(e): return "⏳ A IA está com alta demanda. Tente depois."
-            return f"Erro na IA: {e}"
-
-    def sugerir_categoria_gemini(descricao):
-        if not gemini_ok or client is None: return "Outros"
-        categorias_disponiveis = get_categorias()
-        prompt = f"""Com base na descrição, sugira a categoria mais adequada.\nOpções: {', '.join(categorias_disponiveis)}.\nDescrição: "{descricao}"\nResponda APENAS com o nome."""
-        try:
-            return api_sugestao_gemini(prompt)
-        except: return "Outros"      
-
-    def extrair_dados_recibo_gemini(imagem_pil):
-        if not gemini_ok or client is None: return None
-        categorias_disponiveis = get_categorias()
-        prompt = f"""
-        Extraia as informações do recibo e retorne EXATAMENTE no formato JSON abaixo, sem markdown (```json).
-        {{
-            "descricao": "Nome do local",
-            "valor": 0.00,
-            "categoria": "Uma destas: {', '.join(categorias_disponiveis)}",
-            "data": "YYYY-MM-DD"
-        }}
-        """
-        try:
-            resposta = client.models.generate_content(model="gemini-2.5-flash", contents=[imagem_pil, prompt])
-            texto_limpo = resposta.text.replace("```json", "").replace("```", "").strip()
-            import json
-            return json.loads(texto_limpo)
-        except Exception as e:
-            st.error(f"Erro ao extrair: {e}")
-            return None
-
-    def extrair_lote_extrato_gemini(texto_extrato):
-        if not gemini_ok or client is None: return None
-        categorias_disponiveis = get_categorias()
-        prompt = f"""
-        Aqui está o texto de um extrato bancário. Sua tarefa é extrair APENAS as DESPESAS/SAÍDAS (ignore recebimentos, transferências de mesma titularidade, saldos ou resgates de investimento).
-        Para cada despesa encontrada, classifique-a em uma destas categorias: {', '.join(categorias_disponiveis)}.
-        
-        Retorne EXATAMENTE um array JSON, sem formatação markdown (```json), neste formato:
-        [
-            {{"Data": "YYYY-MM-DD", "Descrição": "Nome do local/Gasto", "Categoria": "Nome da Categoria", "Valor (R$)": 150.50}},
-            ...
-        ]
-        
-        Texto do extrato:
-        {texto_extrato}
-        """
-        try:
-            resposta = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
-            texto_limpo = resposta.text.replace("```json", "").replace("```", "").strip()
-            import json
-            return json.loads(texto_limpo)
-        except Exception as e:
-            st.error(f"Erro na extração em lote: {e}")
-            return None
     
     # --- INICIALIZAÇÃO ---
     if "dados_carregados" not in st.session_state:
@@ -390,7 +281,6 @@ if check_password():
             else:
                 st.session_state[f"dados_{g}"] = pd.DataFrame(columns=colunas_guia)
                 
-        # Garante que o formato antigo global seja resetado para o formato mensal
         if st.session_state.pagamento_guias and not isinstance(list(st.session_state.pagamento_guias.values())[0], dict):
             st.session_state.pagamento_guias = {} 
 
@@ -426,13 +316,13 @@ if check_password():
 
         with c_esq:
             if st.button("◀", use_container_width=True, key="btn_mes_ant"):
-                salvar_dados_nuvem() # Salva a tela atual ANTES de mudar o mês
+                salvar_dados_nuvem()
                 if idx_mes_atual == 0:
                     st.session_state.mes_atual = lista_meses[11]
                     st.session_state.ano_atual -= 1
                 else:
                     st.session_state.mes_atual = lista_meses[idx_mes_atual - 1]
-                carregar_dados_sessao() # Carrega os dados do novo mês
+                carregar_dados_sessao()
                 st.session_state.pdf_ready = False
                 st.rerun()
 
@@ -441,13 +331,13 @@ if check_password():
 
         with c_dir:
             if st.button("▶", use_container_width=True, key="btn_mes_prox"):
-                salvar_dados_nuvem() # Salva a tela atual ANTES de mudar o mês
+                salvar_dados_nuvem()
                 if idx_mes_atual == 11:
                     st.session_state.mes_atual = lista_meses[0]
                     st.session_state.ano_atual += 1
                 else:
                     st.session_state.mes_atual = lista_meses[idx_mes_atual + 1]
-                carregar_dados_sessao() # Carrega os dados do novo mês
+                carregar_dados_sessao()
                 st.session_state.pdf_ready = False
                 st.rerun()
                 
@@ -482,7 +372,6 @@ if check_password():
                     cat = row["Categoria"]
                     gastos_cat_p[cat] = gastos_cat_p.get(cat, 0.0) + row["Valor (R$)"]
                 guias_dados_p = {}
-                # Sempre incluir todas as guias
                 for guia in st.session_state.guias_extras:
                     df_parc, tot, cats = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
                     total_guias_p += tot
@@ -872,7 +761,7 @@ if check_password():
             if st.button("✨ Sugerir categoria (IA)", key="sugerir_fixo"):
                 if desc_temp and gemini_ok:
                     with st.spinner("Pensando..."):
-                        sugestao = sugerir_categoria_gemini(desc_temp)
+                        sugestao = sugerir_categoria_gemini(desc_temp, get_categorias())
                         st.info(f"Categoria sugerida: **{sugestao}**")
 
         ef = st.data_editor(
@@ -916,7 +805,7 @@ if check_password():
             if st.button("✨ Sugerir categoria (IA)", key="sugerir_casual"):
                 if desc_temp and gemini_ok:
                     with st.spinner("Pensando..."):
-                        sugestao = sugerir_categoria_gemini(desc_temp)
+                        sugestao = sugerir_categoria_gemini(desc_temp, get_categorias())
                         st.info(f"Categoria sugerida: **{sugestao}**")
                         
         with st.expander("📸 Escanear Cupom Fiscal com IA", expanded=False):
@@ -928,7 +817,7 @@ if check_password():
                 st.image(img, width=300)
                 if st.button("🪄 Extrair Dados", use_container_width=True):
                     with st.spinner("Lendo cupom..."):
-                        dados = extrair_dados_recibo_gemini(img)
+                        dados = extrair_dados_recibo_gemini(img, get_categorias())
                         if dados:
                             st.session_state["recibo_pendente"] = dados
                             st.success("Dados extraídos!")
@@ -1066,7 +955,6 @@ if check_password():
         
         st.markdown("---")
         
-        # Filtra a META_POUPANCA_GLOBAL da listagem de categorias
         metas_categorias = {k: v for k, v in st.session_state.metas_orcamento.items() if k != "META_POUPANCA_GLOBAL"}
         
         if not metas_categorias:
@@ -1098,22 +986,17 @@ if check_password():
         st.write("Esta visão soma os seus gastos **Fixos** atuais (assumindo que se mantêm) com as parcelas já comprometidas dos seus **Cartões e Guias** para os próximos meses.")
         
         projecoes = []
-        # Clonar mês e ano atual para iterar
         m_iter = mes_n
         a_iter = ano_r
         
-        # Pega a lista de meses para pegar os nomes
         lista_meses_nomes = list(MESES.keys())
         
         for i in range(6):
             nome_mes = lista_meses_nomes[m_iter - 1]
             label_mes = f"{nome_mes[:3]}/{str(a_iter)[2:]}"
             
-            # 1. Calcula Fixos (Assumimos que o valor do mês atual se repete)
-            # Pode ser aprimorado no futuro para ler meses já criados
             total_fixo_futuro = t_fix
             
-            # 2. Calcula Guias e Cartões para aquele mês específico
             total_guias_futuro = 0.0
             for g in st.session_state.guias_extras:
                 _, tot_g_futuro, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{g}"), m_iter, a_iter)
@@ -1130,7 +1013,6 @@ if check_password():
                 "Valor (R$)": total_guias_futuro
             })
             
-            # Avança 1 mês
             m_iter += 1
             if m_iter > 12:
                 m_iter = 1
@@ -1222,12 +1104,10 @@ if check_password():
                     lambda x: x.date() if isinstance(x, datetime) and not pd.isna(x) else None
                 )
             
-            # Sempre calcular e mostrar as parcelas
             df_parc, total_parc, _ = calc_parc_com_categoria(df_guia, mes_n, ano_r)
             
             st.markdown(f"**Parcelas neste mês:** {formatar_moeda_br(total_parc)}")
             if not df_parc.empty:
-                # Parcelas sempre visíveis
                 df_parc_format = df_parc.copy()
                 df_parc_format['Valor (R$)'] = df_parc_format['Valor (R$)'].apply(formatar_moeda_br)
                 st.dataframe(df_parc_format, use_container_width=True, hide_index=True)
@@ -1236,7 +1116,6 @@ if check_password():
             
             st.divider()
             
-            # Nova despesa em expander
             with st.expander(f"➕ Nova despesa em {guia_ativa}", expanded=False):
                 with st.form(f"form_nova_guia_{guia_ativa}"):
                     c1, c2 = st.columns(2)
@@ -1268,7 +1147,6 @@ if check_password():
                         else:
                             st.warning("Preencha a descrição.")
                             
-            # --- NOVO LOCAL DA IMPORTAÇÃO DE FATURA ---
             with st.expander(f"📥 Importar Fatura (PDF ou CSV) para {guia_ativa}", expanded=False):
                 arquivo_extrato = st.file_uploader("Envie a fatura deste cartão", type=["pdf", "csv"], key=f"up_{guia_ativa}")
                 
@@ -1283,7 +1161,7 @@ if check_password():
                             elif arquivo_extrato.name.endswith('.csv'):
                                 texto_completo = arquivo_extrato.getvalue().decode("utf-8")
                                 
-                            dados_lote = extrair_lote_extrato_gemini(texto_completo)
+                            dados_lote = extrair_lote_extrato_gemini(texto_completo, get_categorias())
                             
                             if dados_lote and isinstance(dados_lote, list):
                                 st.session_state["fatura_pendente"] = pd.DataFrame(dados_lote)
@@ -1311,7 +1189,6 @@ if check_password():
                     col_sl, col_cl = st.columns(2)
                     with col_sl:
                         if st.button("✅ Guardar no Cartão"):
-                            # Transformar os dados lidos para o formato da Tabela de Guias
                             novas_linhas = []
                             for _, row in df_editado.iterrows():
                                 novas_linhas.append({
@@ -1320,7 +1197,7 @@ if check_password():
                                     "Data da Compra": row.get("Data"),
                                     "Mês Início (1-12)": mes_n,
                                     "Ano Início": ano_r,
-                                    "Qtd Parcelas": 1, # Assume como compra à vista (1 parcela) por defeito
+                                    "Qtd Parcelas": 1, 
                                     "Categoria": row.get("Categoria", "Outros")
                                 })
                             
@@ -1334,7 +1211,6 @@ if check_password():
                             del st.session_state["fatura_pendente"]
                             st.rerun()
             
-            # Tabela de edição dentro de um expander
             with st.expander("📝 Editar todas as despesas"):
                 de = st.data_editor(
                     df_guia,

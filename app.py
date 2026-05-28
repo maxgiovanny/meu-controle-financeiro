@@ -679,6 +679,7 @@ if check_password():
         except Exception as e:
             st.error(f"Erro ao extrair: {e}")
             return None
+
     def extrair_lote_extrato_gemini(texto_extrato):
         if not gemini_ok or client is None: return None
         categorias_disponiveis = get_categorias()
@@ -1075,8 +1076,8 @@ if check_password():
                 st.caption("Marque a guia como paga na seção 'Cartões e Guias' apenas para controle – não afeta os cálculos.")
         
         st.markdown("<br>", unsafe_allow_html=True)
-      
-# --- DIAGRAMA DE SANKEY ---
+        
+        # --- DIAGRAMA DE SANKEY ---
         st.markdown("#### Fluxo do Dinheiro (Sankey)")
         
         # Mapear os índices dos nós
@@ -1124,54 +1125,54 @@ if check_password():
         else:
             st.info("Adicione renda e gastos para visualizar o fluxo do dinheiro.")
             
-        with col_graf1:
-            st.markdown("#### Evolução Anual")
-            historico_df_dados = []
-            chaves_todas = set(list(st.session_state.historico_fixos.keys()) + list(st.session_state.historico_casuais.keys()) + list(st.session_state.renda_por_mes.keys()))
-            if chaves_todas:
-                for chave in chaves_todas:
-                    try:
-                        mes_str, ano_str = chave.split('_')
-                        mes_idx = MESES.get(mes_str, 1)
-                        ano_num = int(ano_str)
-                        df_fixos = pd.DataFrame(st.session_state.historico_fixos.get(chave, []))
-                        tot_f = df_fixos['Valor (R$)'].sum() if not df_fixos.empty and 'Valor (R$)' in df_fixos.columns else 0.0
-                        df_cas = pd.DataFrame(st.session_state.historico_casuais.get(chave, []))
-                        tot_c = df_cas['Valor (R$)'].sum() if not df_cas.empty and 'Valor (R$)' in df_cas.columns else 0.0
-                        tot_g = 0.0
-                        for g in st.session_state.guias_extras:
-                            _, t_g, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{g}"), mes_idx, ano_num)
-                            tot_g += t_g
-                        df_ren = pd.DataFrame(st.session_state.renda_por_mes.get(chave, []))
-                        tot_r = df_ren['Valor (R$)'].sum() if not df_ren.empty and 'Valor (R$)' in df_ren.columns else 0.0
-                        tot_d = tot_f + tot_c + tot_g
-                        historico_df_dados.append({
-                            "Data_Sort": datetime(ano_num, mes_idx, 1),
-                            "Mês": f"{mes_str[:3]}/{str(ano_str)[2:]}",
-                            "Renda": tot_r,
-                            "Despesas": tot_d,
-                            "Sobra": tot_r - tot_d
-                        })
-                    except: continue
-                if historico_df_dados:
-                    df_hist = pd.DataFrame(historico_df_dados).sort_values("Data_Sort")
-                    fig_hist = px.line(
-                        df_hist, 
-                        x="Mês", 
-                        y=["Renda", "Despesas", "Sobra"], 
-                        color_discrete_sequence=['#4D96FF', '#FF6B6B', '#6BCB77'],
-                        markers=True 
-                    )
-                    fig_hist.update_layout(
-                        plot_bgcolor="rgba(0,0,0,0)", 
-                        paper_bgcolor="rgba(0,0,0,0)", 
-                        margin=dict(t=10,b=10,l=0,r=0), 
-                        height=250, 
-                        xaxis=dict(showgrid=False), 
-                        yaxis=dict(showgrid=False),
-                        legend_title_text="Legenda" 
-                    )
-                    st.plotly_chart(fig_hist, use_container_width=True)
+        st.markdown("---")
+        st.markdown("#### Evolução Anual")
+        historico_df_dados = []
+        chaves_todas = set(list(st.session_state.historico_fixos.keys()) + list(st.session_state.historico_casuais.keys()) + list(st.session_state.renda_por_mes.keys()))
+        if chaves_todas:
+            for chave in chaves_todas:
+                try:
+                    mes_str, ano_str = chave.split('_')
+                    mes_idx = MESES.get(mes_str, 1)
+                    ano_num = int(ano_str)
+                    df_fixos = pd.DataFrame(st.session_state.historico_fixos.get(chave, []))
+                    tot_f = df_fixos['Valor (R$)'].sum() if not df_fixos.empty and 'Valor (R$)' in df_fixos.columns else 0.0
+                    df_cas = pd.DataFrame(st.session_state.historico_casuais.get(chave, []))
+                    tot_c = df_cas['Valor (R$)'].sum() if not df_cas.empty and 'Valor (R$)' in df_cas.columns else 0.0
+                    tot_g = 0.0
+                    for g in st.session_state.guias_extras:
+                        _, t_g, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{g}"), mes_idx, ano_num)
+                        tot_g += t_g
+                    df_ren = pd.DataFrame(st.session_state.renda_por_mes.get(chave, []))
+                    tot_r = df_ren['Valor (R$)'].sum() if not df_ren.empty and 'Valor (R$)' in df_ren.columns else 0.0
+                    tot_d = tot_f + tot_c + tot_g
+                    historico_df_dados.append({
+                        "Data_Sort": datetime(ano_num, mes_idx, 1),
+                        "Mês": f"{mes_str[:3]}/{str(ano_str)[2:]}",
+                        "Renda": tot_r,
+                        "Despesas": tot_d,
+                        "Sobra": tot_r - tot_d
+                    })
+                except: continue
+            if historico_df_dados:
+                df_hist = pd.DataFrame(historico_df_dados).sort_values("Data_Sort")
+                fig_hist = px.line(
+                    df_hist, 
+                    x="Mês", 
+                    y=["Renda", "Despesas", "Sobra"], 
+                    color_discrete_sequence=['#4D96FF', '#FF6B6B', '#6BCB77'],
+                    markers=True 
+                )
+                fig_hist.update_layout(
+                    plot_bgcolor="rgba(0,0,0,0)", 
+                    paper_bgcolor="rgba(0,0,0,0)", 
+                    margin=dict(t=10,b=10,l=0,r=0), 
+                    height=250, 
+                    xaxis=dict(showgrid=False), 
+                    yaxis=dict(showgrid=False),
+                    legend_title_text="Legenda" 
+                )
+                st.plotly_chart(fig_hist, use_container_width=True)
 
         st.divider()
         if st.button("🤖 Análise da IA para este mês"):
@@ -1307,7 +1308,8 @@ if check_password():
                     if st.button("❌ Cancelar"):
                         del st.session_state["recibo_pendente"]
                         st.rerun()
-                with st.expander("📥 Importar Extrato em Lote (PDF ou CSV) via IA", expanded=False):
+                        
+        with st.expander("📥 Importar Extrato em Lote (PDF ou CSV) via IA", expanded=False):
             arquivo_extrato = st.file_uploader("Envie seu extrato bancário", type=["pdf", "csv"])
             
             if arquivo_extrato is not None:

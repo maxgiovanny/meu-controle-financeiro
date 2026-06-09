@@ -859,20 +859,31 @@ if check_password():
 
         # 3. Buscar em TODAS as Guias/Cartões
         for guia in st.session_state.guias_extras:
-            # Puxa apenas as parcelas que caem no mês atual usando a sua função já pronta
+            # Puxa apenas as parcelas que caem no mês atual
             df_parc, _, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
             if not df_parc.empty:
                 for _, row in df_parc.iterrows():
                     cat = row.get('Categoria', 'Outros')
                     categorias_presentes.add(cat)
-                    data_compra = row.get('Data da Compra')
+                    
+                    # CORREÇÃO DA DATA: Tenta buscar 'Data' primeiro, se não achar, busca 'Data da Compra'
+                    data_compra = row.get('Data')
+                    if pd.isna(data_compra) or data_compra is None:
+                        data_compra = row.get('Data da Compra')
+                        
                     d_str = data_compra.strftime("%d/%m/%Y") if hasattr(data_compra, 'strftime') and pd.notna(data_compra) else "-"
+                    
+                    # CORREÇÃO DO VALOR: Tenta 'Valor (R$)' primeiro, se não achar, busca 'Valor Parcela (R$)'
+                    valor_gasto = row.get('Valor (R$)')
+                    if pd.isna(valor_gasto) or valor_gasto is None:
+                        valor_gasto = row.get('Valor Parcela (R$)', 0.0)
+                        
                     dados_consolidados.append({
                         "Data": d_str,
                         "Fonte/Guia": f"💳 {guia}",
                         "Descrição": row.get('Descrição', ''),
                         "Categoria": cat,
-                        "Valor (R$)": row.get('Valor Parcela (R$)', 0.0)
+                        "Valor (R$)": float(valor_gasto)
                     })
 
         # 4. Renderizar a Tabela Interativa

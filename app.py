@@ -783,6 +783,45 @@ if check_password():
             st.plotly_chart(fig_cat, use_container_width=True)
         else:
             st.info("Nenhum gasto registrado.")
+            
+        st.divider()
+        st.subheader("🗓️ Gastos Diários (Fixos + Casuais + Guias)")
+
+        # 1. Consolidar gastos casuais
+        df_cas = st.session_state.gastos_casuais.copy()
+        if not df_cas.empty:
+            df_cas['Data'] = pd.to_datetime(df_cas['Data'])
+            df_cas = df_cas.groupby('Data')['Valor (R$)'].sum().reset_index()
+            df_cas.columns = ['Data', 'Valor']
+            df_cas['Tipo'] = 'Dia a Dia'
+
+        # 2. Consolidar parcelas das guias (usando a Data da Compra)
+        df_guias_all = pd.DataFrame()
+        for guia in st.session_state.guias_extras:
+            df_g = st.session_state.get(f"dados_{guia}").copy()
+            if not df_g.empty:
+                df_g['Data'] = pd.to_datetime(df_g['Data da Compra'], errors='coerce')
+                df_guias_all = pd.concat([df_guias_all, df_g[['Data', 'Valor Parcela (R$)']]])
+        
+        if not df_guias_all.empty:
+            df_guias_all = df_guias_all.groupby('Data')['Valor Parcela (R$)'].sum().reset_index()
+            df_guias_all.columns = ['Data', 'Valor']
+            df_guias_all['Tipo'] = 'Cartões/Guias'
+
+        # 3. Juntar tudo
+        df_diario = pd.concat([df_cas, df_guias_all])
+        
+        if not df_diario.empty:
+            df_diario = df_diario.groupby(['Data', 'Tipo'])['Valor'].sum().reset_index()
+            fig_diario = px.bar(
+                df_diario, x="Data", y="Valor", color="Tipo",
+                title=f"Gastos Diários - {st.session_state.mes_atual}",
+                labels={"Valor": "Gasto (R$)"}
+            )
+            fig_diario.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig_diario, use_container_width=True)
+        else:
+            st.info("Não há dados de gastos com data para exibir no gráfico diário.")
 
     elif sel == "Cartões e Guias":
         st.subheader("💳 Cartões de Crédito e Guias Extras")

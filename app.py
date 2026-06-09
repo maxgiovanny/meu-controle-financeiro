@@ -823,6 +823,87 @@ if check_password():
         else:
             st.info("Não há dados de gastos com data para exibir no gráfico diário.")
 
+        st.divider()
+        st.subheader("🔎 Detalhamento por Categoria (Global)")
+        st.write("Selecione uma categoria para ver todos os gastos associados a ela neste mês, consolidados de todas as fontes.")
+
+        dados_consolidados = []
+        categorias_presentes = set()
+
+        # 1. Buscar nos Gastos Fixos
+        if not st.session_state.gastos_fixos.empty:
+            for _, row in st.session_state.gastos_fixos.iterrows():
+                cat = row.get('Categoria', 'Outros')
+                categorias_presentes.add(cat)
+                dados_consolidados.append({
+                    "Data": f"Dia {int(row.get('Dia Venc.', 10))}" if pd.notna(row.get('Dia Venc.')) else "-",
+                    "Fonte/Guia": "📌 Gasto Fixo",
+                    "Descrição": row.get('Descrição', ''),
+                    "Categoria": cat,
+                    "Valor (R$)": row.get('Valor (R$)', 0.0)
+                })
+
+        # 2. Buscar nos Gastos Casuais (Dia a Dia)
+        if not st.session_state.gastos_casuais.empty:
+            for _, row in st.session_state.gastos_casuais.iterrows():
+                cat = row.get('Categoria', 'Outros')
+                categorias_presentes.add(cat)
+                d_str = row['Data'].strftime("%d/%m/%Y") if hasattr(row.get('Data'), 'strftime') else str(row.get('Data', '-'))
+                dados_consolidados.append({
+                    "Data": d_str,
+                    "Fonte/Guia": "🛍️ Dia a Dia",
+                    "Descrição": row.get('Descrição', ''),
+                    "Categoria": cat,
+                    "Valor (R$)": row.get('Valor (R$)', 0.0)
+                })
+
+        # 3. Buscar em TODAS as Guias/Cartões
+        for guia in st.session_state.guias_extras:
+            # Puxa apenas as parcelas que caem no mês atual usando a sua função já pronta
+            df_parc, _, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
+            if not df_parc.empty:
+                for _, row in df_parc.iterrows():
+                    cat = row.get('Categoria', 'Outros')
+                    categorias_presentes.add(cat)
+                    data_compra = row.get('Data da Compra')
+                    d_str = data_compra.strftime("%d/%m/%Y") if hasattr(data_compra, 'strftime') and pd.notna(data_compra) else "-"
+                    dados_consolidados.append({
+                        "Data": d_str,
+                        "Fonte/Guia": f"💳 {guia}",
+                        "Descrição": row.get('Descrição', ''),
+                        "Categoria": cat,
+                        "Valor (R$)": row.get('Valor Parcela (R$)', 0.0)
+                    })
+
+        # 4. Renderizar a Tabela Interativa
+        if dados_consolidados:
+            df_detalhe = pd.DataFrame(dados_consolidados)
+            
+            # Dropdown para escolher a categoria (mostra apenas categorias que tiveram gastos)
+            cat_selecionada = st.selectbox("Selecione a Categoria:", sorted(list(categorias_presentes)))
+            
+            # Filtra o DataFrame
+            df_filtrado = df_detalhe[df_detalhe['Categoria'] == cat_selecionada]
+            
+            if not df_filtrado.empty:
+                total_cat = df_filtrado['Valor (R$)'].sum()
+                st.markdown(f"**Total gasto com {cat_selecionada} neste mês:** <span style='color:#FF6B6B; font-size:18px; font-weight:bold;'>{formatar_moeda_br(total_cat)}</span>", unsafe_allow_html=True)
+                
+                # Formata a coluna de valor para exibição (R$ X.XXX,XX)
+                df_display = df_filtrado.copy()
+                df_display['Valor (R$)'] = df_display['Valor (R$)'].apply(formatar_moeda_br)
+                
+                # Exibe a tabela ocultando o índice e a coluna Categoria (pois já está selecionada)
+                st.dataframe(
+                    df_display[['Data', 'Fonte/Guia', 'Descrição', 'Valor (R$)']], 
+                    use_container_width=True, 
+                    hide_index=True
+                )
+            else:
+                st.info(f"Nenhum detalhe encontrado para a categoria {cat_selecionada}.")
+        else:
+            st.info("Nenhum dado disponível para análise de categorias neste mês.")
+
     elif sel == "Cartões e Guias":
         st.subheader("💳 Cartões de Crédito e Guias Extras")
         if not st.session_state.guias_extras:

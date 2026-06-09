@@ -759,22 +759,59 @@ if check_password():
             else:
                 st.warning("Nenhum registro encontrado.")
 
-    elif sel == "Resumo das Guias":
-        st.subheader("📊 Custos por Guia")
-        dados_guias = []
+    elif sel == "Visão Consolidada":  # <--- Nome novo da aba atualizado!
+        st.subheader("📊 Composição de Despesas (Origem)")
+        
+        dados_fontes = []
+        
+        # 1. Adiciona Gastos Fixos
+        if t_fix > 0:
+            dados_fontes.append({"Origem": "📌 Gastos Fixos", "Custo (R$)": t_fix})
+            
+        # 2. Adiciona Gastos Casuais (Dia a Dia)
+        if t_cas > 0:
+            dados_fontes.append({"Origem": "🛍️ Dia a Dia", "Custo (R$)": t_cas})
+
+        # 3. Adiciona as Guias/Cartões individualmente
+        total_guias_grafico = 0.0
         for g in st.session_state.guias_extras:
             _, custo, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{g}"), mes_n, ano_r)
-            dados_guias.append({"Guia": g, "Custo (R$)": custo})
-        if dados_guias:
-            df_guias = pd.DataFrame(dados_guias)
-            st.markdown(f"**Total Guias:** {formatar_moeda_br(df_guias['Custo (R$)'].sum())}")
-            fig_guias = px.bar(df_guias, x="Guia", y="Custo (R$)", color="Guia")
-            fig_guias.update_layout(plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig_guias, use_container_width=True)
+            if custo > 0:
+                dados_fontes.append({"Origem": f"💳 {g}", "Custo (R$)": custo})
+                total_guias_grafico += custo
+
+        # 4. Renderiza o Gráfico Consolidado
+        if dados_fontes:
+            df_fontes = pd.DataFrame(dados_fontes)
+            
+            # Mostra um pequeno resumo em texto acima do gráfico para facilitar a leitura
+            st.markdown(
+                f"**Fixos:** {formatar_moeda_br(t_fix)} &nbsp;|&nbsp; "
+                f"**Dia a Dia:** {formatar_moeda_br(t_cas)} &nbsp;|&nbsp; "
+                f"**Total Guias:** {formatar_moeda_br(total_guias_grafico)}"
+            )
+            
+            fig_fontes = px.bar(
+                df_fontes, 
+                x="Origem", 
+                y="Custo (R$)", 
+                color="Origem", 
+                text_auto='.2s',
+                title="Distribuição de onde o dinheiro está saindo"
+            )
+            fig_fontes.update_layout(
+                plot_bgcolor="rgba(0,0,0,0)", 
+                paper_bgcolor="rgba(0,0,0,0)",
+                xaxis_title="",
+                yaxis_title="Valor (R$)",
+                showlegend=False # Esconde a legenda lateral pois os nomes já estão no eixo X
+            )
+            st.plotly_chart(fig_fontes, use_container_width=True)
         else:
-            st.info("Nenhuma guia extra.")
+            st.info("Nenhum gasto registrado neste mês.")
 
         st.divider()
+        
         st.subheader("📊 Gastos por Categoria")
         if gastos_categoria:
             df_cat = pd.DataFrame(gastos_categoria.items(), columns=["Categoria","Valor (R$)"]).sort_values("Valor (R$)", ascending=False)

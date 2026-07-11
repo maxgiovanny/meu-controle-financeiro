@@ -1,9 +1,7 @@
 import streamlit as st
 import pandas as pd
 from modulos.bd_google import salvar_dados_nuvem
-
 from modulos.utilidades import formatar_moeda_br, safe_float, safe_int, safe_str, safe_bool, MESES
-from modulos.bd_google import salvar_dados_nuvem
 
 def renderizar_sidebar(
     get_categorias_fn,
@@ -15,9 +13,9 @@ def renderizar_sidebar(
     with st.sidebar:
         st.markdown(f"<h3 style='text-align: center;'>👤 Olá, {str(st.session_state.get('usuario_logado', '')).title()}</h3>", unsafe_allow_html=True)
         st.markdown("---")
-        
+
         st.subheader("📅 Mês de Referência")
-        
+
         c_esq, c_meio, c_dir = st.columns([1, 2, 1])
         lista_meses = list(MESES.keys())
         idx_mes_atual = lista_meses.index(st.session_state.mes_atual)
@@ -48,12 +46,12 @@ def renderizar_sidebar(
                 carregar_dados_sessao_fn()
                 st.session_state.pdf_ready = False
                 st.rerun()
-                
+
         st.markdown("---")
         st.subheader("Navegação Principal")
         opcoes = ["Resumo Geral", "Renda", "Gastos Fixos", "Dia a Dia", "Cartões e Guias", "Visão Consolidada", "Investimentos", "Metas de Orçamento", "Projeção Futura", "Pesquisa Global"]
         sel = st.radio("", opcoes, label_visibility="collapsed")
-        
+
         st.markdown("---")
         st.subheader("⚙️ Configurações")
 
@@ -81,6 +79,11 @@ def renderizar_sidebar(
                     cat = row["Categoria"]
                     gastos_cat_p[cat] = gastos_cat_p.get(cat, 0.0) + row["Valor (R$)"]
                 guias_dados_p = {}
+                
+                # Previne erro caso guias_extras não exista na hora de gerar o PDF
+                if "guias_extras" not in st.session_state:
+                    st.session_state.guias_extras = []
+                    
                 for guia in st.session_state.guias_extras:
                     df_parc, tot, cats = calc_parc_com_categoria_fn(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
                     total_guias_p += tot
@@ -118,13 +121,13 @@ def renderizar_sidebar(
                     salvar_dados_nuvem()
                     st.rerun()
                 else: st.warning("Categoria já existe ou nome inválido.")
-            
+
             st.markdown("---")
             st.write("✏️ **Editar categorias existentes**")
             cat_para_editar = st.selectbox("Selecione a categoria:", get_categorias_fn(), key="cat_edit_select")
             is_padrao = cat_para_editar in st.session_state.categorias_padrao
             is_personalizada = cat_para_editar in st.session_state.categorias_personalizadas
-            
+
             novo_nome_cat = st.text_input("Novo nome:", key="novo_nome_cat")
             col1, col2 = st.columns(2)
             with col1:
@@ -135,9 +138,14 @@ def renderizar_sidebar(
                             st.session_state.categorias_padrao[st.session_state.categorias_padrao.index(antigo)] = novo_nome_cat
                         else:
                             st.session_state.categorias_personalizadas[st.session_state.categorias_personalizadas.index(antigo)] = novo_nome_cat
-                        
+
                         if not st.session_state.gastos_fixos.empty: st.session_state.gastos_fixos.loc[st.session_state.gastos_fixos["Categoria"] == antigo, "Categoria"] = novo_nome_cat
                         if not st.session_state.gastos_casuais.empty: st.session_state.gastos_casuais.loc[st.session_state.gastos_casuais["Categoria"] == antigo, "Categoria"] = novo_nome_cat
+                        
+                        # Previne erro caso guias_extras não exista
+                        if "guias_extras" not in st.session_state:
+                            st.session_state.guias_extras = []
+                            
                         for guia in st.session_state.guias_extras:
                             df_g = st.session_state[f"dados_{guia}"]
                             if not df_g.empty and "Categoria" in df_g.columns:
@@ -155,6 +163,11 @@ def renderizar_sidebar(
                                 st.session_state.categorias_personalizadas.remove(cat_para_editar)
                                 if not st.session_state.gastos_fixos.empty: st.session_state.gastos_fixos.loc[st.session_state.gastos_fixos["Categoria"] == cat_para_editar, "Categoria"] = "Outros"
                                 if not st.session_state.gastos_casuais.empty: st.session_state.gastos_casuais.loc[st.session_state.gastos_casuais["Categoria"] == cat_para_editar, "Categoria"] = "Outros"
+                                
+                                # Previne erro caso guias_extras não exista
+                                if "guias_extras" not in st.session_state:
+                                    st.session_state.guias_extras = []
+                                    
                                 for guia in st.session_state.guias_extras:
                                     df_g = st.session_state[f"dados_{guia}"]
                                     if not df_g.empty and "Categoria" in df_g.columns:
@@ -166,6 +179,11 @@ def renderizar_sidebar(
         # --- Gerenciar Guias ---
         st.divider()
         st.subheader("🛠️ Gerenciar Guias")
+        
+        # GARANTIA DE EXISTÊNCIA DA VARIÁVEL: Isso resolve o erro apontado!
+        if "guias_extras" not in st.session_state:
+            st.session_state.guias_extras = []
+            
         with st.expander("Opções de gerenciamento"):
             ng = st.text_input("Nova Guia/Cartão:")
             if st.button("➕ Criar", key="add_guia"):
@@ -173,14 +191,15 @@ def renderizar_sidebar(
                     st.session_state.guias_extras.append(ng)
                     colunas_guia = ["Descrição","Valor Parcela (R$)","Data da Compra","Mês Início (1-12)","Ano Início","Qtd Parcelas","Categoria"]
                     st.session_state[f"dados_{ng}"] = pd.DataFrame(columns=colunas_guia)
-                    
+
                     chave_atual = f"{st.session_state.mes_atual}_{st.session_state.ano_atual}"
                     if chave_atual not in st.session_state.pagamento_guias:
                         st.session_state.pagamento_guias[chave_atual] = {}
                     st.session_state.pagamento_guias[chave_atual][ng] = False
-                    
+
                     salvar_dados_nuvem()
                     st.rerun()
+            
             if st.session_state.guias_extras:
                 g_ativa = st.selectbox("Cartão para editar:", st.session_state.guias_extras, key="guia_edit")
                 novo_nome = st.text_input("Renomear para:", key="rename_guia")
@@ -226,7 +245,7 @@ def renderizar_sidebar(
                             st.session_state.guias_extras[idx], st.session_state.guias_extras[idx+1] = st.session_state.guias_extras[idx+1], st.session_state.guias_extras[idx]
                             salvar_dados_nuvem()
                             st.rerun()
-                            
+
         st.divider()
         if st.button("🚪 Sair do App", use_container_width=True):
             for key in list(st.session_state.keys()):

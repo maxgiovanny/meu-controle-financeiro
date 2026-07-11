@@ -1,5 +1,7 @@
 import streamlit as st
 import pandas as pd
+from modulos.bd_google import salvar_dados_nuvem
+
 from modulos.utilidades import formatar_moeda_br, safe_float, safe_int, safe_str, safe_bool, MESES
 from modulos.bd_google import salvar_dados_nuvem
 

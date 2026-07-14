@@ -185,79 +185,6 @@ if check_password():
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # --- INÍCIO DA NOVA SEÇÃO: TODOS OS GASTOS DO MÊS ---
-        with st.expander("📋 Ver todos os gastos deste mês detalhados", expanded=False):
-            todos_gastos_mes = []
-            
-            # 1. Busca Gastos Fixos
-            if not st.session_state.gastos_fixos.empty:
-                for _, row in st.session_state.gastos_fixos.iterrows():
-                    todos_gastos_mes.append({
-                        "Data": f"Dia {int(row.get('Dia Venc.', 10))}" if pd.notna(row.get('Dia Venc.')) else "-",
-                        "Origem": "📌 Fixo",
-                        "Descrição": row.get('Descrição', ''),
-                        "Categoria": row.get('Categoria', 'Outros'),
-                        "Valor (R$)": row.get('Valor (R$)', 0.0)
-                    })
-            
-            # 2. Busca Gastos Casuais
-            if not st.session_state.gastos_casuais.empty:
-                for _, row in st.session_state.gastos_casuais.iterrows():
-                    d_str = row['Data'].strftime("%d/%m/%Y") if hasattr(row.get('Data'), 'strftime') else str(row.get('Data', '-'))
-                    todos_gastos_mes.append({
-                        "Data": d_str,
-                        "Origem": "🛍️ Dia a Dia",
-                        "Descrição": row.get('Descrição', ''),
-                        "Categoria": row.get('Categoria', 'Outros'),
-                        "Valor (R$)": row.get('Valor (R$)', 0.0)
-                    })
-            
-            # 3. Busca nas Guias (Apenas parcelas do mês vigente)
-            for guia in st.session_state.guias_extras:
-                df_parc, _, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
-                if not df_parc.empty:
-                    for _, row in df_parc.iterrows():
-                        # Fallback de Data
-                        data_compra = row.get('Data')
-                        if pd.isna(data_compra) or data_compra is None:
-                            data_compra = row.get('Data da Compra')
-                        d_str = data_compra.strftime("%d/%m/%Y") if hasattr(data_compra, 'strftime') and pd.notna(data_compra) else "-"
-                        
-                        # Fallback de Valor
-                        valor_gasto = row.get('Valor (R$)')
-                        if pd.isna(valor_gasto) or valor_gasto is None:
-                            valor_gasto = row.get('Valor Parcela (R$)', 0.0)
-                            
-                        todos_gastos_mes.append({
-                            "Data": d_str,
-                            "Origem": f"💳 {guia}",
-                            "Descrição": row.get('Descrição', ''),
-                            "Categoria": row.get('Categoria', 'Outros'),
-                            "Valor (R$)": float(valor_gasto)
-                        })
-            
-            # Renderiza a tabela se houver gastos
-            if todos_gastos_mes:
-                df_todos_gastos = pd.DataFrame(todos_gastos_mes)
-                
-                # Ordena pela categoria para facilitar a leitura (opcional, pode remover se preferir a ordem de inserção)
-                df_todos_gastos = df_todos_gastos.sort_values(by="Categoria")
-                
-                df_visual = df_todos_gastos.copy()
-                df_visual['Valor (R$)'] = df_visual['Valor (R$)'].apply(formatar_moeda_br)
-                
-                st.dataframe(
-                    df_visual, 
-                    use_container_width=True, 
-                    hide_index=True
-                )
-            else:
-                st.info("Nenhum gasto registrado para este mês.")
-        
-        st.markdown("<br>", unsafe_allow_html=True)
-        # --- FIM DA NOVA SEÇÃO ---
-
-
         st.markdown("#### Fluxo do Dinheiro (Sankey)")
         labels_sankey = ["Renda", "Sobra", "Fixos", "Dia a Dia", "Guias"] + get_categorias()
         source, target, value = [], [], []
@@ -355,7 +282,79 @@ if check_password():
             with st.spinner("Consultando o Gemini..."):
                 analise = analise_financeira_gemini(total_renda, gt, sobra, gastos_categoria)
             st.info(analise)
+    elif sel == "Todos os Gastos":
+        st.subheader("📋 Todos os Gastos do Mês")
+        st.write("Abaixo estão listados todos os gastos consolidados deste mês (Fixos, Dia a Dia e Guias).")
 
+        todos_gastos_mes = []
+        
+        # 1. Busca Gastos Fixos
+        if not st.session_state.gastos_fixos.empty:
+            for _, row in st.session_state.gastos_fixos.iterrows():
+                todos_gastos_mes.append({
+                    "Data": f"Dia {int(row.get('Dia Venc.', 10))}" if pd.notna(row.get('Dia Venc.')) else "-",
+                    "Origem": "📌 Fixo",
+                    "Descrição": row.get('Descrição', ''),
+                    "Categoria": row.get('Categoria', 'Outros'),
+                    "Valor (R$)": row.get('Valor (R$)', 0.0)
+                })
+        
+        # 2. Busca Gastos Casuais
+        if not st.session_state.gastos_casuais.empty:
+            for _, row in st.session_state.gastos_casuais.iterrows():
+                d_str = row['Data'].strftime("%d/%m/%Y") if hasattr(row.get('Data'), 'strftime') else str(row.get('Data', '-'))
+                todos_gastos_mes.append({
+                    "Data": d_str,
+                    "Origem": "🛍️ Dia a Dia",
+                    "Descrição": row.get('Descrição', ''),
+                    "Categoria": row.get('Categoria', 'Outros'),
+                    "Valor (R$)": row.get('Valor (R$)', 0.0)
+                })
+        
+        # 3. Busca nas Guias (Apenas parcelas do mês vigente)
+        for guia in st.session_state.guias_extras:
+            df_parc, _, _ = calc_parc_com_categoria(st.session_state.get(f"dados_{guia}"), mes_n, ano_r)
+            if not df_parc.empty:
+                for _, row in df_parc.iterrows():
+                    # Fallback de Data
+                    data_compra = row.get('Data')
+                    if pd.isna(data_compra) or data_compra is None:
+                        data_compra = row.get('Data da Compra')
+                    d_str = data_compra.strftime("%d/%m/%Y") if hasattr(data_compra, 'strftime') and pd.notna(data_compra) else "-"
+                    
+                    # Fallback de Valor
+                    valor_gasto = row.get('Valor (R$)')
+                    if pd.isna(valor_gasto) or valor_gasto is None:
+                        valor_gasto = row.get('Valor Parcela (R$)', 0.0)
+                        
+                    todos_gastos_mes.append({
+                        "Data": d_str,
+                        "Origem": f"💳 {guia}",
+                        "Descrição": row.get('Descrição', ''),
+                        "Categoria": row.get('Categoria', 'Outros'),
+                        "Valor (R$)": float(valor_gasto)
+                    })
+        
+        # 4. Renderiza a tabela na tela cheia
+        if todos_gastos_mes:
+            df_todos_gastos = pd.DataFrame(todos_gastos_mes)
+            
+            # Ordena pela categoria para manter organizado
+            df_todos_gastos = df_todos_gastos.sort_values(by="Categoria")
+            
+            df_visual = df_todos_gastos.copy()
+            df_visual['Valor (R$)'] = df_visual['Valor (R$)'].apply(formatar_moeda_br)
+            
+            # Como agora tem uma tela inteira para isso, a tabela pode ocupar bastante espaço
+            st.dataframe(
+                df_visual, 
+                use_container_width=True, 
+                hide_index=True,
+                height=500 # Aumentamos a altura da tabela para ver mais itens de uma vez
+            )
+        else:
+            st.info("Nenhum gasto registrado para este mês.")
+    
     elif sel == "Renda":
         st.subheader("💵 Fontes de Renda")
         er = st.data_editor(

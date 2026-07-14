@@ -49,7 +49,7 @@ def renderizar_sidebar(
 
         st.markdown("---")
         st.subheader("Navegação Principal")
-        opcoes = ["Resumo Geral", "Renda", "Gastos Fixos", "Dia a Dia", "Cartões e Guias", "Visão Consolidada", "Investimentos", "Metas de Orçamento", "Projeção Futura", "Pesquisa Global"]
+        opcoes = ["Resumo Geral", "Todos os Gastos", "Renda", "Gastos Fixos", "Dia a Dia", "Cartões e Guias", "Visão Consolidada", "Investimentos", "Metas de Orçamento", "Projeção Futura", "Pesquisa Global"]
         sel = st.radio("", opcoes, label_visibility="collapsed")
 
         st.markdown("---")
